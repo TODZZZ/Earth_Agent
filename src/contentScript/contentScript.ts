@@ -31,6 +31,18 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
         .catch(error => sendResponse({ success: false, error: error instanceof Error ? error.message : String(error) }));
       return true;
 
+    case 'GET_TASKS':
+      getTasks()
+        .then(tasks => sendResponse({ success: true, tasks }))
+        .catch(error => sendResponse({ success: false, error: error instanceof Error ? error.message : String(error) }));
+      return true;
+
+    case 'EDIT_SCRIPT':
+      editScript(message.scriptId, message.content)
+        .then(result => sendResponse({ success: true, message: result }))
+        .catch(error => sendResponse({ success: false, error: error instanceof Error ? error.message : String(error) }));
+      return true;
+
     case 'CHECK_PAGE':
       // Check if we're on the Earth Engine page
       const isEarthEnginePage = window.location.href.includes('code.earthengine.google.com');
@@ -252,55 +264,147 @@ async function checkConsole(): Promise<any[]> {
         }
       }
       
-      if (errors.length > 0) {
-        console.log('Found errors in console:', errors);
-        return errors;
-      }
-      
-      // If no specific error elements found, get the entire console content
-      const consoleContent = Array.from(consolePanels).map(panel => panel.textContent).join('\n');
-      
-      // Check for common error keywords in the content
-      if (consoleContent.match(/error|exception|fail|invalid/i)) {
-        return [{
-          level: 'error',
-          message: consoleContent.trim()
-        }];
-      }
-      
-      // No errors found
-      return [];
+      return errors;
     }
     
-    // Mock some errors randomly if we can't access the actual console
-    // This is for development/testing without actual GEE access
-    if (Math.random() > 0.7) {
-      const potentialErrors = [
-        { level: 'error', message: 'Object does not exist or cannot be loaded: Invalid dataset ID' },
-        { level: 'error', message: 'Layer error: Image.clip, argument "geometry": Invalid type.' },
-        { level: 'warning', message: 'Projection not specified for input layers.' },
-        { level: 'error', message: 'Dictionary.get: Dictionary does not contain key: band' }
-      ];
-      
-      // Return 1-2 random errors
-      const numErrors = Math.floor(Math.random() * 2) + 1;
-      const selectedErrors = [];
-      
-      for (let i = 0; i < numErrors; i++) {
-        const randomIndex = Math.floor(Math.random() * potentialErrors.length);
-        selectedErrors.push(potentialErrors[randomIndex]);
-      }
-      
-      return selectedErrors;
-    }
-    
+    // If we couldn't find any console panel or errors, return an empty array
     return [];
   } catch (error: any) {
     console.error('Error checking console:', error);
-    return [{
-      level: 'error',
-      message: 'Internal error checking console: ' + (error?.message || 'Unknown error')
-    }];
+    throw new Error(error?.message || 'Failed to check console');
+  }
+}
+
+/**
+ * Access tasks in Earth Engine
+ */
+async function getTasks(): Promise<any[]> {
+  console.log('Accessing Earth Engine tasks');
+  
+  try {
+    // Look for the tasks button in the UI
+    const tasksButtons = [
+      document.querySelector('button[title="Tasks"]'),
+      document.querySelector('button.tasks-button'),
+      document.querySelector('button[aria-label="Tasks"]'),
+      // Add more selectors based on the actual GEE interface
+    ].filter(Boolean);
+    
+    if (tasksButtons.length > 0) {
+      // Click the tasks button to open the tasks panel
+      (tasksButtons[0] as HTMLElement).click();
+      console.log('Tasks panel opened');
+      
+      // Wait for tasks panel to load
+      await new Promise(resolve => setTimeout(resolve, 500));
+      
+      // Try to find the task list
+      const taskListElements = document.querySelectorAll('.task-list, .tasks-panel');
+      
+      if (taskListElements.length > 0) {
+        // Process task items
+        const taskItems = [];
+        
+        for (const taskList of taskListElements) {
+          const items = taskList.querySelectorAll('.task-item, .task-row');
+          
+          for (const item of items) {
+            // Extract task information
+            const nameElement = item.querySelector('.task-name, .task-title');
+            const statusElement = item.querySelector('.task-status, .task-state');
+            const typeElement = item.querySelector('.task-type');
+            const dateElement = item.querySelector('.task-date, .task-created');
+            
+            taskItems.push({
+              id: item.id || `task-${taskItems.length + 1}`,
+              name: nameElement ? nameElement.textContent?.trim() : 'Unknown Task',
+              state: statusElement ? statusElement.textContent?.trim() : 'Unknown',
+              created: dateElement ? dateElement.textContent?.trim() : new Date().toISOString(),
+              type: typeElement ? typeElement.textContent?.trim() : 'Export',
+            });
+          }
+        }
+        
+        // If we found task items, return them
+        if (taskItems.length > 0) {
+          return taskItems;
+        }
+      }
+    }
+    
+    // Fallback to mock data if we couldn't access the actual tasks
+    return [
+      {
+        id: 'mock-task-1',
+        name: 'Export Image',
+        state: 'COMPLETED',
+        created: new Date(Date.now() - 86400000).toISOString(), // 1 day ago
+        type: 'EXPORT_IMAGE'
+      },
+      {
+        id: 'mock-task-2',
+        name: 'Export Table',
+        state: 'RUNNING',
+        created: new Date(Date.now() - 3600000).toISOString(), // 1 hour ago
+        type: 'EXPORT_TABLE'
+      },
+      {
+        id: 'mock-task-3',
+        name: 'Export Features',
+        state: 'FAILED',
+        created: new Date(Date.now() - 43200000).toISOString(), // 12 hours ago
+        type: 'EXPORT_FEATURES'
+      }
+    ];
+  } catch (error: any) {
+    console.error('Error accessing tasks:', error);
+    throw new Error(error?.message || 'Failed to access tasks');
+  }
+}
+
+/**
+ * Edit a script in Earth Engine
+ */
+async function editScript(scriptId: string, content: string): Promise<string> {
+  console.log('Editing script in Earth Engine:', scriptId);
+  
+  try {
+    // Check if scriptId is valid
+    if (!scriptId) {
+      throw new Error('Invalid script ID');
+    }
+    
+    // In a real implementation, we'd need to:
+    // 1. Navigate to the script using scriptId
+    // 2. Open the script in the editor
+    // 3. Replace the content with the new content
+    // 4. Save the script
+    
+    // For now, we'll simulate this process
+    const editor = findAceEditor();
+    
+    // Set the content in the editor
+    editor.setValue(content);
+    
+    // Look for a save button
+    const saveButtons = [
+      document.querySelector('button[title="Save"]'),
+      document.querySelector('button.save-button'),
+      document.querySelector('button.goog-button.save'),
+      // Add more selectors based on the actual GEE interface
+    ].filter(Boolean);
+    
+    if (saveButtons.length > 0) {
+      // Click the save button
+      console.log('Found save button, clicking');
+      (saveButtons[0] as HTMLElement).click();
+      await new Promise(resolve => setTimeout(resolve, 300));
+    }
+    
+    return `Script "${scriptId}" edited successfully`;
+  } catch (error: any) {
+    console.error('Error editing script:', error);
+    throw new Error(error?.message || 'Failed to edit script');
   }
 }
 

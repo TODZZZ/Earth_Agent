@@ -64,7 +64,7 @@ export const createSummarizerAgent = () => {
       
       // Initialize the LLM with the API key
       const model = new ChatOpenAI({
-        modelName: "gpt-3.5-turbo",
+        modelName: "gpt-4o",
         temperature: 0,
         openAIApiKey: apiKey,
         configuration: {
@@ -86,18 +86,33 @@ export const createSummarizerAgent = () => {
         inspectionResults: state.inspectionResults || "No inspection results available."
       });
       
-      const result = await model.invoke(formattedPrompt);
-      
-      // Extract the summary from the LLM response
-      const summary = result.content.toString();
+      try {
+        const result = await model.invoke(formattedPrompt);
+        
+        // Safely extract the summary from the LLM response with null checking
+        let summary = "I've generated Earth Engine code based on your request, but encountered an error generating a detailed summary.";
+        
+        if (result && result.content) {
+          // Safely convert content to string, handling both string and object types
+          summary = typeof result.content === 'string' 
+            ? result.content 
+            : result.content.toString ? result.content.toString() : JSON.stringify(result.content);
+        }
 
-      console.log("Generated summary:", summary);
+        console.log("Generated summary:", summary);
 
-      // Return the updated state with the summary as the response
-      return {
-        ...state,
-        response: summary
-      };
+        // Return the updated state with the summary as the response
+        return {
+          ...state,
+          response: summary
+        };
+      } catch (invokeError) {
+        console.error("Error invoking LLM for summary:", invokeError);
+        return {
+          ...state,
+          response: state.response || "I encountered an error while summarizing the analysis. Here's the raw code and results instead."
+        };
+      }
     } catch (error) {
       console.error("Error in summarizer agent:", error);
       return {

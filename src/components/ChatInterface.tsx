@@ -1,5 +1,7 @@
 import React, { useState, useRef, useEffect } from 'react'
 import { initializeAgentSystem } from '../lib/agents'
+import { AgentResponseSchema } from '../lib/agents/types'
+import { z } from 'zod'
 
 interface Message {
   id: string
@@ -10,6 +12,13 @@ interface Message {
 
 interface ChatInterfaceProps {
   onQuerySubmit?: () => Promise<void>
+}
+
+// Define the possible agent error types to identify which agent failed
+interface AgentError extends Error {
+  agent?: string;   // Which agent failed (planner, database selector, etc.)
+  phase?: string;   // Which phase of processing failed
+  details?: any;    // Additional error details
 }
 
 export const ChatInterface: React.FC<ChatInterfaceProps> = ({ onQuerySubmit }) => {
@@ -65,33 +74,80 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({ onQuerySubmit }) =
         // Use the agent system to process the input - ensure input is valid
         if (trimmedInput) {
           try {
-            const response = await agentSystem(trimmedInput)
-
-            // Validate the response object
-            if (!response || typeof response !== 'object') {
-              throw new Error('Invalid response from agent system')
-            }
+            // Get response from agent system with detailed error tracking
+            console.log('Sending query to agent system:', trimmedInput);
+            const rawResponse = await agentSystem(trimmedInput)
+            console.log('Raw response from agent system:', rawResponse);
             
-            const assistantMessage: Message = {
-              id: (Date.now() + 1).toString(),
-              role: 'assistant',
-              content: response && typeof response.response === 'string' 
-                ? response.response 
-                : 'I encountered an error processing your request.',
-              code: response && typeof response.code === 'string' 
-                ? response.code 
-                : undefined
+            // Validate with Zod schema to ensure correct format
+            try {
+              const validatedResponse = AgentResponseSchema.parse(rawResponse)
+              
+              // Create message from validated response
+              const assistantMessage: Message = {
+                id: (Date.now() + 1).toString(),
+                role: 'assistant',
+                content: validatedResponse.response,
+                code: validatedResponse.code
+              }
+              
+              setMessages(prev => [...prev, assistantMessage])
+            } catch (zodError) {
+              // Handle Zod validation errors specifically
+              console.error('Zod validation error:', zodError);
+              throw new Error(`Response validation failed: ${zodError instanceof z.ZodError ? 
+                zodError.errors.map(e => e.message).join(', ') : 'Unknown Zod error'}`);
             }
-            
-            setMessages(prev => [...prev, assistantMessage])
           } catch (agentError) {
-            console.error('Error in agent system:', agentError)
-            const errorMessage: Message = {
+            // Provide detailed error logging to identify which agent/step failed
+            if (agentError instanceof Error) {
+              // Extract any agent-specific information if available
+              const errorAgent = (agentError as AgentError).agent || 'unknown';
+              const errorPhase = (agentError as AgentError).phase || 'unknown';
+              const errorDetails = (agentError as AgentError).details;
+              
+              console.error(`Error in agent system [${errorAgent}][${errorPhase}]:`, agentError);
+              console.error('Error details:', errorDetails);
+              console.error('Error stack:', agentError.stack);
+            } else {
+              console.error('Non-Error object thrown in agent system:', agentError);
+            }
+            
+            // Try to extract any useful error information
+            let errorMessage = 'Unknown error';
+            let errorLocation = '';
+            
+            if (agentError instanceof Error) {
+              errorMessage = agentError.message;
+              // Try to extract context from error message or properties
+              if ((agentError as AgentError).agent) {
+                errorLocation = `in ${(agentError as AgentError).agent} agent`;
+              } else if ((agentError as AgentError).phase) {
+                errorLocation = `during ${(agentError as AgentError).phase}`;
+              } else if (agentError.stack) {
+                // Try to extract context from stack trace
+                const stackLines = agentError.stack.split('\n');
+                for (const line of stackLines) {
+                  if (line.includes('/agents/') && !line.includes('/index.ts')) {
+                    const agentMatch = line.match(/\/agents\/([^\/\.]+)/);
+                    if (agentMatch && agentMatch[1]) {
+                      errorLocation = `in ${agentMatch[1]} agent`;
+                      break;
+                    }
+                  }
+                }
+              }
+            } else if (agentError instanceof z.ZodError) {
+              // Handle Zod validation errors specifically
+              errorMessage = `Data validation error: ${agentError.errors.map(e => e.message).join(', ')}`;
+            }
+            
+            const errorResponse: Message = {
               id: (Date.now() + 1).toString(),
               role: 'assistant',
-              content: `I encountered an error while processing your request: ${agentError instanceof Error ? agentError.message : 'Unknown error'}`,
+              content: `I encountered an error ${errorLocation} while processing your request: ${errorMessage}. Please try again with a different query.`
             }
-            setMessages(prev => [...prev, errorMessage])
+            setMessages(prev => [...prev, errorResponse])
           }
         } else {
           // Handle empty input (shouldn't happen due to the check at the beginning)

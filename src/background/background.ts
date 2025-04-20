@@ -19,7 +19,7 @@ chrome.action.onClicked.addListener((tab) => {
   }
 });
 
-// Message handling between content script and popup/sidepanel
+// Message handling between content script and sidepanel
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   console.log('Background received message:', message, 'from:', sender);
 

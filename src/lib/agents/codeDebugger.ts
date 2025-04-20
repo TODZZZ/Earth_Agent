@@ -64,7 +64,7 @@ export const createCodeDebuggerAgent = () => {
       
       // Initialize the LLM with the API key
       const model = new ChatOpenAI({
-        modelName: "gpt-3.5-turbo",
+        modelName: "gpt-4o",
         temperature: 0,
         openAIApiKey: apiKey,
         configuration: {

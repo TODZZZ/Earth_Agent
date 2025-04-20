@@ -21,6 +21,12 @@ export const STORAGE_KEYS = {
  */
 export const saveApiKey = async (apiKey: string): Promise<void> => {
   try {
+    // First check if we're in a context where chrome.storage is available
+    if (typeof chrome === 'undefined' || !chrome.storage || !chrome.storage.sync) {
+      console.warn("Chrome storage API is not available in saveApiKey");
+      throw new Error('Chrome storage API is not available');
+    }
+    
     console.log("Saving API key to Chrome storage, length:", apiKey.length);
     await chrome.storage.sync.set({ [STORAGE_KEYS.OPENAI_API_KEY]: apiKey });
     console.log('API key saved successfully');
@@ -35,6 +41,12 @@ export const saveApiKey = async (apiKey: string): Promise<void> => {
  */
 export const getApiKey = async (): Promise<string | null> => {
   try {
+    // First check if we're in a context where chrome.storage is available
+    if (typeof chrome === 'undefined' || !chrome.storage || !chrome.storage.sync) {
+      console.warn("Chrome storage API is not available in getApiKey");
+      return null;
+    }
+    
     console.log("Retrieving API key from Chrome storage...");
     const result = await chrome.storage.sync.get([STORAGE_KEYS.OPENAI_API_KEY]);
     const apiKey = result[STORAGE_KEYS.OPENAI_API_KEY] || null;
@@ -50,10 +62,21 @@ export const getApiKey = async (): Promise<string | null> => {
  * Check if the API key is set
  */
 export const isApiKeySet = async (): Promise<boolean> => {
-  const apiKey = await getApiKey();
-  const isSet = !!apiKey;
-  console.log("API key is set:", isSet);
-  return isSet;
+  try {
+    // First check if we're in a context where chrome.storage is available
+    if (typeof chrome === 'undefined' || !chrome.storage || !chrome.storage.sync) {
+      console.warn("Chrome storage API is not available");
+      return false;
+    }
+    
+    const apiKey = await getApiKey();
+    const isSet = !!apiKey;
+    console.log("API key is set:", isSet);
+    return isSet;
+  } catch (error) {
+    console.error('Error checking if API key is set:', error);
+    return false;
+  }
 };
 
 /**
@@ -61,6 +84,12 @@ export const isApiKeySet = async (): Promise<boolean> => {
  */
 export const saveSettings = async (settings: Record<string, any>): Promise<void> => {
   try {
+    // First check if we're in a context where chrome.storage is available
+    if (typeof chrome === 'undefined' || !chrome.storage || !chrome.storage.sync) {
+      console.warn("Chrome storage API is not available in saveSettings");
+      throw new Error('Chrome storage API is not available');
+    }
+    
     await chrome.storage.sync.set({ [STORAGE_KEYS.SETTINGS]: settings });
     console.log('Settings saved successfully');
   } catch (error) {
@@ -74,6 +103,12 @@ export const saveSettings = async (settings: Record<string, any>): Promise<void>
  */
 export const getSettings = async (): Promise<Record<string, any>> => {
   try {
+    // First check if we're in a context where chrome.storage is available
+    if (typeof chrome === 'undefined' || !chrome.storage || !chrome.storage.sync) {
+      console.warn("Chrome storage API is not available in getSettings");
+      return {};
+    }
+    
     const result = await chrome.storage.sync.get([STORAGE_KEYS.SETTINGS]);
     return result[STORAGE_KEYS.SETTINGS] || {};
   } catch (error) {

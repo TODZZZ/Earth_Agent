@@ -18,13 +18,6 @@ export default defineConfig({
             resolve(__dirname, 'dist/sidepanel.html')
           );
           console.log('Successfully copied sidepanel.html to dist root');
-          
-          // Copy other HTML files if needed
-          copyFileSync(
-            resolve(__dirname, 'dist/src/popup/popup.html'), 
-            resolve(__dirname, 'dist/popup.html')
-          );
-          console.log('Successfully copied popup.html to dist root');
         } catch (error) {
           console.error('Error copying HTML files:', error);
         }
@@ -39,7 +32,6 @@ export default defineConfig({
   build: {
     rollupOptions: {
       input: {
-        popup: resolve(__dirname, 'src/popup/popup.html'),
         sidepanel: resolve(__dirname, 'src/sidepanel/sidepanel.html'),
         background: resolve(__dirname, 'src/background/background.ts'),
         contentScript: resolve(__dirname, 'src/contentScript/contentScript.ts'),
