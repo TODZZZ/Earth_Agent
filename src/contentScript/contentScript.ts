@@ -3,6 +3,11 @@
  * 
  * This script runs in the context of the Google Earth Engine page
  * and allows interaction with the page DOM.
+ * 
+ * Features:
+ * - Code injection into the Earth Engine editor
+ * - Run button automation
+ * - Multiple injection methods for reliability
  */
 
 console.log('Earth Engine Agent content script loaded');
@@ -14,9 +19,16 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   // Handle different message types
   switch (message.type) {
     case 'RUN_CODE':
+      console.log('RUN_CODE message received with code:', message.code.substring(0, 100) + '...');
       runCode(message.code)
-        .then(result => sendResponse({ success: true, result }))
-        .catch(error => sendResponse({ success: false, error: error instanceof Error ? error.message : String(error) }));
+        .then(result => {
+          console.log('Code execution completed successfully:', result);
+          sendResponse({ success: true, result });
+        })
+        .catch(error => {
+          console.error('Code execution failed:', error);
+          sendResponse({ success: false, error: error instanceof Error ? error.message : String(error) });
+        });
       return true; // Indicates async response
 
     case 'INSPECT_MAP':
@@ -60,6 +72,7 @@ function findAceEditor(): any {
   try {
     // ACE editor is typically available in a global 'ace' object or attached to a DOM element
     // Try multiple approaches to find it
+    console.log('Attempting to find ACE editor in Earth Engine');
     
     // First attempt: Direct access to global ace object if it exists
     const windowWithAce = window as any;
@@ -120,12 +133,19 @@ function findAceEditor(): any {
 function clickRunButton(): Promise<void> {
   return new Promise((resolve, reject) => {
     try {
-      // Look for run button in the Earth Engine interface
+      console.log("Looking for Earth Engine run button");
+      
+      // Look for run button in the Earth Engine interface using multiple selectors for reliability
       const runButtons = [
+        document.querySelector('.goog-button.run-button'),
         document.querySelector('button[title="Run"]'),
         document.querySelector('button.run-button'),
         document.querySelector('button.goog-button.run'),
-        // Add more selectors based on the actual GEE interface
+        // Try finding by text content or aria-label
+        ...Array.from(document.querySelectorAll('button')).filter(b => 
+          b.innerText === 'Run' || b.title === 'Run' || 
+          b.getAttribute('aria-label') === 'Run'
+        )
       ].filter(Boolean);
       
       if (runButtons.length > 0) {
@@ -133,11 +153,13 @@ function clickRunButton(): Promise<void> {
         // Use the first found button
         (runButtons[0] as HTMLElement).click();
         // Wait a bit to let the execution start
-        setTimeout(resolve, 500);
+        setTimeout(() => {
+          console.log("Run button clicked successfully");
+          resolve();
+        }, 500);
       } else {
-        console.log('Run button not found, using simulated execution');
-        // Simulate clicking if we can't find the button
-        setTimeout(resolve, 500);
+        console.error('Run button not found');
+        reject(new Error('Could not find the run button'));
       }
     } catch (error) {
       console.error('Error clicking run button:', error);
@@ -147,23 +169,140 @@ function clickRunButton(): Promise<void> {
 }
 
 /**
+ * Inject code into the Earth Engine Code Editor using multiple methods
+ * We try several different approaches to maximize compatibility with Earth Engine's
+ * editor interface which may change over time.
+ */
+async function injectCode(code: string): Promise<{ success: boolean; message: string }> {
+  try {
+    console.log("Attempting to inject code into Earth Engine editor");
+    
+    // Method 1: Direct ACE Editor manipulation through the text input
+    const editorElement = document.querySelector('.ace_editor');
+    if (!editorElement) {
+      console.error("Could not find ACE editor");
+      return { success: false, message: "Could not find editor" };
+    }
+    
+    // Try to get the textarea input (most reliable direct method)
+    const textInput = document.querySelector('.ace_text-input');
+    if (textInput) {
+      console.log("Found text input, focusing and setting value");
+      (textInput as HTMLTextAreaElement).focus();
+      
+      // Use execCommand for reliable insertion
+      document.execCommand('selectAll', false);
+      document.execCommand('insertText', false, code);
+      return { success: true, message: "Code injected via text input" };
+    }
+    
+    // Method 2: Use ACE API if available
+    const windowWithAce = window as any;
+    if (windowWithAce.ace) {
+      try {
+        console.log("Using ACE API");
+        const editor = windowWithAce.ace.edit(editorElement);
+        editor.setValue(code);
+        editor.clearSelection();
+        return { success: true, message: "Code injected via ACE API" };
+      } catch (e) {
+        console.error("Error using ACE API", e);
+      }
+    }
+    
+    // Method 3: Direct DOM manipulation of the text layer
+    const textLayer = document.querySelector('.ace_text-layer');
+    if (textLayer) {
+      console.log("Manipulating DOM directly");
+      textLayer.innerHTML = '';
+      const lines = code.split('\n');
+      for (let i = 0; i < lines.length; i++) {
+        const lineDiv = document.createElement('div');
+        lineDiv.className = 'ace_line';
+        lineDiv.textContent = lines[i] || ' ';
+        textLayer.appendChild(lineDiv);
+      }
+      return { success: true, message: "Code injected via DOM" };
+    }
+    
+    // Method 4: Use our original findAceEditor method as last resort
+    try {
+      console.log("Trying findAceEditor fallback method");
+      const editor = findAceEditor();
+      editor.setValue(code);
+      editor.clearSelection();
+      return { success: true, message: "Code injected via findAceEditor method" };
+    } catch (error) {
+      console.error("Error with fallback method:", error);
+    }
+    
+    console.error("All code injection methods failed");
+    return { success: false, message: "All injection methods failed" };
+  } catch (error) {
+    console.error("Error injecting code:", error);
+    return { success: false, message: error instanceof Error ? error.message : String(error) };
+  }
+}
+
+/**
+ * Wait for Earth Engine to initialize and the run button to be available
+ */
+function waitForEarthEngineRunButton(maxAttempts = 10, currentAttempt = 0): Promise<boolean> {
+  return new Promise((resolve) => {
+    if (currentAttempt > maxAttempts) {
+      console.error("Timeout waiting for Earth Engine to initialize");
+      resolve(false);
+      return;
+    }
+    
+    const runButton = document.querySelector('.goog-button.run-button') || 
+                     document.querySelector('button[title="Run"]');
+    
+    if (runButton) {
+      console.log("Run button found, Earth Engine is ready");
+      resolve(true);
+    } else {
+      console.log(`Waiting for Earth Engine to initialize (attempt ${currentAttempt + 1}/${maxAttempts})`);
+      // Wait 3 seconds and try again
+      setTimeout(() => {
+        waitForEarthEngineRunButton(maxAttempts, currentAttempt + 1)
+          .then(resolve);
+      }, 3000);
+    }
+  });
+}
+
+/**
  * Run code in the Earth Engine Code Editor
+ * This injects the code and then clicks the run button
  */
 async function runCode(code: string): Promise<string> {
-  console.log('Running code in Earth Engine:', code);
+  console.log('Running code in Earth Engine');
+  console.log('Code length:', code.length, 'characters');
   
   try {
-    // 1. Find the ACE editor
-    const editor = findAceEditor();
+    // Wait for Earth Engine to initialize
+    console.log("Waiting for Earth Engine to initialize...");
+    const isReady = await waitForEarthEngineRunButton();
+    if (!isReady) {
+      throw new Error("Earth Engine did not initialize in time");
+    }
     
-    // 2. Set the code in the editor
-    editor.setValue(code);
+    // Inject the code using our enhanced method
+    console.log("Injecting code...");
+    const injectionResult = await injectCode(code);
     
-    // 3. Click the "Run" button
+    if (!injectionResult.success) {
+      throw new Error(`Failed to inject code: ${injectionResult.message}`);
+    }
+    
+    console.log("Code injection successful:", injectionResult.message);
+    
+    // Click the Run button
+    console.log("Clicking run button...");
     await clickRunButton();
     
-    // 4. Return success message
-    return 'Code executed successfully';
+    return `Code executed successfully: ${injectionResult.message}`;
   } catch (error: any) {
     console.error('Error running code:', error);
     throw new Error(error?.message || 'Unknown error running code');

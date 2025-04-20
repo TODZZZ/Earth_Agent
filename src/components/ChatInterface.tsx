@@ -199,30 +199,38 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({ onQuerySubmit }) =
   const handleRunCode = (code: string) => {
     console.log('Running code in Earth Engine:', code)
     
-    // Send a message to the content script to run the code
-    chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
-      if (tabs[0]?.id) {
-        chrome.tabs.sendMessage(
-          tabs[0].id, 
-          { type: 'RUN_CODE', code },
-          (response) => {
-            if (chrome.runtime.lastError) {
-              console.error('Error sending message:', chrome.runtime.lastError)
-              alert('Error: Could not run code in Earth Engine. Make sure you are on the Earth Engine Code Editor page.')
-              return
-            }
-            
-            if (response?.success) {
-              alert('Code successfully sent to Earth Engine.')
-            } else {
-              alert(`Error: ${response?.error || 'Could not run code in Earth Engine'}`)
-            }
-          }
-        )
-      } else {
-        alert('Error: No active tab found. Make sure you are on the Earth Engine Code Editor page.')
+    // Add loading state
+    const runButtonElement = document.getElementById('run-code-button') as HTMLButtonElement
+    const runSpinnerElement = document.getElementById('run-spinner') as HTMLDivElement
+    
+    if (runButtonElement) runButtonElement.disabled = true
+    if (runSpinnerElement) runSpinnerElement.style.display = 'block'
+    
+    // Send a message to the background script to open Earth Engine and run the code
+    chrome.runtime.sendMessage(
+      { type: 'OPEN_EARTH_ENGINE_AND_RUN_CODE', code },
+      (response) => {
+        // Reset UI
+        if (runButtonElement) runButtonElement.disabled = false
+        if (runSpinnerElement) runSpinnerElement.style.display = 'none'
+        
+        if (chrome.runtime.lastError) {
+          console.error('Error sending message to background:', chrome.runtime.lastError)
+          const errorMessage = chrome.runtime.lastError.message || 'Unknown error'
+          alert(`Error: Could not run code in Earth Engine. ${errorMessage}`)
+          return
+        }
+        
+        if (response?.success) {
+          console.log('Code injection successful:', response.result)
+          // Success message - can be a toast notification instead of an alert
+          alert('Code successfully sent to Earth Engine and executed.')
+        } else {
+          console.error('Error running code:', response?.error)
+          alert(`Error: ${response?.error || 'Could not run code in Earth Engine'}`)
+        }
       }
-    })
+    )
   }
 
   return (
@@ -272,12 +280,25 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({ onQuerySubmit }) =
                 <div className="bg-gray-800 text-gray-200 p-3 rounded-md overflow-x-auto">
                   <pre><code>{message.code}</code></pre>
                 </div>
-                <button
-                  onClick={() => handleRunCode(message.code!)}
-                  className="mt-2 px-3 py-1 bg-green-600 text-white rounded-md hover:bg-green-700 transition-colors"
-                >
-                  Run Code
-                </button>
+                <div className="flex items-center mt-2">
+                  <button
+                    id="run-code-button"
+                    onClick={() => handleRunCode(message.code!)}
+                    className="px-3 py-1 bg-green-600 text-white rounded-md hover:bg-green-700 transition-colors disabled:bg-gray-400 flex items-center"
+                  >
+                    <span className="mr-1">Run Code</span>
+                    <div 
+                      id="run-spinner" 
+                      className="hidden animate-spin h-4 w-4"
+                      style={{ display: 'none' }}
+                    >
+                      <svg className="w-4 h-4 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                      </svg>
+                    </div>
+                  </button>
+                </div>
               </div>
             )}
           </div>
