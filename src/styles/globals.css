@@ -10,15 +10,26 @@
 body {
   color: rgb(var(--foreground-rgb));
   background: rgb(var(--background-rgb));
-  width: 350px;
-  height: 600px;
+  width: 100%;
+  min-height: 800px;
   margin: 0;
   font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 
     'Helvetica Neue', Arial, sans-serif;
 }
 
+/* Chrome extension specific sizing for popup mode */
+@media (min-width: 100px) and (max-width: 800px) {
+  body.extension-popup {
+    width: 100%;
+    height: 800px;
+    max-width: 1200px;
+    overflow-y: auto;
+  }
+}
+
 #root {
   height: 100%;
+  width: 100%;
 }
 
 /* Scrollbar styling */
