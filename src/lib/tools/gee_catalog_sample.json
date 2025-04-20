@@ -1,0 +1,82 @@
+[
+  {
+    "id": "USGS/SRTMGL1_003",
+    "name": "SRTM Global 1 arc second elevation",
+    "description": "Shuttle Radar Topography Mission (SRTM) digital elevation data is a worldwide elevation dataset.",
+    "tags": ["elevation", "topography", "dem", "srtm"],
+    "provider": "USGS",
+    "documentation_url": "https://developers.google.com/earth-engine/datasets/catalog/USGS_SRTMGL1_003"
+  },
+  {
+    "id": "MODIS/006/MOD13Q1",
+    "name": "MODIS Terra Vegetation Indices 16-Day Global 250m",
+    "description": "Vegetation indices designed to provide consistent spatial and temporal comparisons of vegetation conditions.",
+    "tags": ["modis", "vegetation", "ndvi", "evi"],
+    "provider": "NASA",
+    "documentation_url": "https://developers.google.com/earth-engine/datasets/catalog/MODIS_006_MOD13Q1"
+  },
+  {
+    "id": "COPERNICUS/S2",
+    "name": "Sentinel-2 MSI: MultiSpectral Instrument, Level-1C",
+    "description": "Sentinel-2 is a wide-swath, high-resolution, multi-spectral imaging mission supporting Copernicus Land Monitoring studies.",
+    "tags": ["sentinel", "satellite", "esa", "copernicus"],
+    "provider": "ESA",
+    "documentation_url": "https://developers.google.com/earth-engine/datasets/catalog/COPERNICUS_S2"
+  },
+  {
+    "id": "LANDSAT/LC08/C01/T1_SR",
+    "name": "USGS Landsat 8 Surface Reflectance Tier 1",
+    "description": "Landsat 8 SR is atmospherically corrected surface reflectance from the Landsat 8 OLI/TIRS sensors.",
+    "tags": ["landsat", "usgs", "sr", "surface reflectance"],
+    "provider": "USGS",
+    "documentation_url": "https://developers.google.com/earth-engine/datasets/catalog/LANDSAT_LC08_C01_T1_SR"
+  },
+  {
+    "id": "NASA/GPM_L3/IMERG_V06",
+    "name": "GPM: Global Precipitation Measurement (GPM) v6",
+    "description": "Global Precipitation Measurement (GPM) IMERG precipitation data.",
+    "tags": ["precipitation", "rainfall", "gpm", "nasa"],
+    "provider": "NASA",
+    "documentation_url": "https://developers.google.com/earth-engine/datasets/catalog/NASA_GPM_L3_IMERG_V06"
+  },
+  {
+    "id": "JAXA/ALOS/PALSAR/YEARLY/FNF",
+    "name": "JAXA ALOS PALSAR Yearly Forest/Non-Forest",
+    "description": "Global 25m resolution annual forest/non-forest cover maps based on PALSAR and PALSAR-2 data.",
+    "tags": ["jaxa", "forest", "landcover", "palsar", "radar"],
+    "provider": "JAXA",
+    "documentation_url": "https://developers.google.com/earth-engine/datasets/catalog/JAXA_ALOS_PALSAR_YEARLY_FNF"
+  },
+  {
+    "id": "NOAA/DMSP-OLS/NIGHTTIME_LIGHTS",
+    "name": "DMSP OLS: Nighttime Lights Time Series",
+    "description": "Time series of nighttime lights imagery from DMSP-OLS Nighttime Lights.",
+    "tags": ["nighttime", "lights", "dmsp", "noaa", "urban"],
+    "provider": "NOAA",
+    "documentation_url": "https://developers.google.com/earth-engine/datasets/catalog/NOAA_DMSP-OLS_NIGHTTIME_LIGHTS"
+  },
+  {
+    "id": "JRC/GSW1_3/GlobalSurfaceWater",
+    "name": "JRC Global Surface Water Mapping Layers, v1.3",
+    "description": "Global Surface Water Mapping layers based on Landsat imagery between 1984 and 2020.",
+    "tags": ["water", "jrc", "landsat", "surface water", "occurrence"],
+    "provider": "JRC",
+    "documentation_url": "https://developers.google.com/earth-engine/datasets/catalog/JRC_GSW1_3_GlobalSurfaceWater"
+  },
+  {
+    "id": "ESA/WorldCover/v100",
+    "name": "ESA WorldCover 10m v100",
+    "description": "Global land cover map at 10m resolution based on Sentinel-1 and Sentinel-2 data.",
+    "tags": ["landcover", "esa", "sentinel", "global"],
+    "provider": "ESA",
+    "documentation_url": "https://developers.google.com/earth-engine/datasets/catalog/ESA_WorldCover_v100"
+  },
+  {
+    "id": "NASA/NASADEM_HGT/001",
+    "name": "NASA DEM: NASADEM",
+    "description": "NASADEM is a reprocessing of the SRTM data with improved vertical accuracy and fewer voids.",
+    "tags": ["dem", "elevation", "nasadem", "srtm", "nasa"],
+    "provider": "NASA",
+    "documentation_url": "https://developers.google.com/earth-engine/datasets/catalog/NASA_NASADEM_HGT_001"
+  }
+] 

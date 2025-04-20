@@ -1,9 +1,36 @@
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 import { resolve } from 'path';
+import { copyFileSync } from 'fs';
 
 export default defineConfig({
-  plugins: [react()],
+  plugins: [
+    react(),
+    // Plugin to ensure HTML files are copied to dist root
+    {
+      name: 'copy-html-files',
+      closeBundle() {
+        // Manually copy necessary HTML files to dist root
+        console.log('Copying HTML files to dist root...');
+        try {
+          copyFileSync(
+            resolve(__dirname, 'dist/src/sidepanel/sidepanel.html'), 
+            resolve(__dirname, 'dist/sidepanel.html')
+          );
+          console.log('Successfully copied sidepanel.html to dist root');
+          
+          // Copy other HTML files if needed
+          copyFileSync(
+            resolve(__dirname, 'dist/src/popup/popup.html'), 
+            resolve(__dirname, 'dist/popup.html')
+          );
+          console.log('Successfully copied popup.html to dist root');
+        } catch (error) {
+          console.error('Error copying HTML files:', error);
+        }
+      }
+    }
+  ],
   resolve: {
     alias: {
       '@': resolve(__dirname, 'src'),

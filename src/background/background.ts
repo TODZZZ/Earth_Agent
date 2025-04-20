@@ -5,6 +5,18 @@
 // Listen for installation
 chrome.runtime.onInstalled.addListener((details) => {
   console.log('Earth Agent installed', details);
+  
+  // Configure the side panel behavior to open when icon is clicked
+  chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true })
+    .catch(error => console.error('Error setting panel behavior:', error));
+});
+
+// Open side panel when extension icon is clicked
+chrome.action.onClicked.addListener((tab) => {
+  if (tab?.windowId) {
+    chrome.sidePanel.open({ windowId: tab.windowId })
+      .catch(error => console.error('Error opening side panel:', error));
+  }
 });
 
 // Message handling between content script and popup/sidepanel

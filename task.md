@@ -14,6 +14,7 @@ We will have following agents using langgraph.js:
 3. Code generator: based on the selected databases, generate the code for the google engine editor and run it to see the map rendering.
 4. code debugger: will check if the code successfully run or not, if it has errors, it can fetch errors and modify the code according to the error message.
 5. summarizer: will summarize the chats and the maps and give response to answer user’s questions.
+6. coordinator and superviser: will coordinate and supervise the task execution, review and decide what agent to summon and what tool to call to accomplish the tasks.
 
 Tools:
 The following tools needs to be implemented and the agents will call these tools to accomplish the tasks:

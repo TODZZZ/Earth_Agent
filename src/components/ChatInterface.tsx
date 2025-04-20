@@ -1,4 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react'
+import { initializeAgentSystem } from '../lib/agents'
 
 interface Message {
   id: string
@@ -7,11 +8,31 @@ interface Message {
   code?: string
 }
 
-export const ChatInterface: React.FC = () => {
+interface ChatInterfaceProps {
+  onQuerySubmit?: () => Promise<void>
+}
+
+export const ChatInterface: React.FC<ChatInterfaceProps> = ({ onQuerySubmit }) => {
   const [messages, setMessages] = useState<Message[]>([])
   const [input, setInput] = useState('')
   const [isLoading, setIsLoading] = useState(false)
+  const [agentSystem, setAgentSystem] = useState<any>(null)
   const messagesEndRef = useRef<HTMLDivElement>(null)
+
+  // Initialize the agent system on component mount
+  useEffect(() => {
+    const setup = async () => {
+      try {
+        console.log('Initializing agent system...')
+        const system = await initializeAgentSystem()
+        console.log('Agent system initialized')
+        setAgentSystem(system)
+      } catch (error) {
+        console.error('Error initializing agent system:', error)
+      }
+    }
+    setup()
+  }, [])
 
   // Scroll to bottom when messages change
   useEffect(() => {
@@ -20,13 +41,14 @@ export const ChatInterface: React.FC = () => {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
-    if (!input.trim()) return
+    const trimmedInput = input.trim()
+    if (!trimmedInput) return
 
     // Add user message
     const userMessage: Message = {
       id: Date.now().toString(),
       role: 'user',
-      content: input.trim()
+      content: trimmedInput
     }
     
     setMessages(prev => [...prev, userMessage])
@@ -34,27 +56,107 @@ export const ChatInterface: React.FC = () => {
     setIsLoading(true)
 
     try {
-      // Mock AI response for now, will connect to LangChain agents later
-      setTimeout(() => {
-        const assistantMessage: Message = {
-          id: (Date.now() + 1).toString(),
-          role: 'assistant',
-          content: 'This is a mock response. I will integrate with LangGraph agents in the next phase.',
-          code: 'var image = ee.Image("USGS/SRTMGL1_003");\nvar elevation = image.select("elevation");\nMap.setCenter(-112.8598, 36.2841, 9); // Center on the Grand Canyon\nMap.addLayer(elevation, {min: 0, max: 4000, palette: ["blue", "green", "yellow", "red"]}, "Elevation");'
+      // Track usage if callback provided
+      if (onQuerySubmit) {
+        await onQuerySubmit();
+      }
+      
+      if (agentSystem) {
+        // Use the agent system to process the input - ensure input is valid
+        if (trimmedInput) {
+          try {
+            const response = await agentSystem(trimmedInput)
+
+            // Validate the response object
+            if (!response || typeof response !== 'object') {
+              throw new Error('Invalid response from agent system')
+            }
+            
+            const assistantMessage: Message = {
+              id: (Date.now() + 1).toString(),
+              role: 'assistant',
+              content: response && typeof response.response === 'string' 
+                ? response.response 
+                : 'I encountered an error processing your request.',
+              code: response && typeof response.code === 'string' 
+                ? response.code 
+                : undefined
+            }
+            
+            setMessages(prev => [...prev, assistantMessage])
+          } catch (agentError) {
+            console.error('Error in agent system:', agentError)
+            const errorMessage: Message = {
+              id: (Date.now() + 1).toString(),
+              role: 'assistant',
+              content: `I encountered an error while processing your request: ${agentError instanceof Error ? agentError.message : 'Unknown error'}`,
+            }
+            setMessages(prev => [...prev, errorMessage])
+          }
+        } else {
+          // Handle empty input (shouldn't happen due to the check at the beginning)
+          const errorMessage: Message = {
+            id: (Date.now() + 1).toString(),
+            role: 'assistant',
+            content: "I couldn't process your request. Please provide a valid query.",
+          }
+          setMessages(prev => [...prev, errorMessage])
         }
-        setMessages(prev => [...prev, assistantMessage])
-        setIsLoading(false)
-      }, 1000)
+      } else {
+        // Fallback if agent system isn't initialized
+        setTimeout(() => {
+          const assistantMessage: Message = {
+            id: (Date.now() + 1).toString(),
+            role: 'assistant',
+            content: 'The Earth Agent system is still initializing. Please try again in a moment.',
+            code: '// Agent system initializing'
+          }
+          setMessages(prev => [...prev, assistantMessage])
+          setIsLoading(false)
+        }, 1000)
+      }
     } catch (error) {
       console.error('Error processing message:', error)
+      
+      // Add error message
+      const errorMessage: Message = {
+        id: (Date.now() + 1).toString(),
+        role: 'assistant',
+        content: 'I encountered an error while processing your request. Please try again with a different query.',
+      }
+      setMessages(prev => [...prev, errorMessage])
+    } finally {
       setIsLoading(false)
     }
   }
 
   const handleRunCode = (code: string) => {
     console.log('Running code in Earth Engine:', code)
-    // Will implement code execution via content script in Phase 2
-    alert('Code execution will be implemented in Phase 2')
+    
+    // Send a message to the content script to run the code
+    chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+      if (tabs[0]?.id) {
+        chrome.tabs.sendMessage(
+          tabs[0].id, 
+          { type: 'RUN_CODE', code },
+          (response) => {
+            if (chrome.runtime.lastError) {
+              console.error('Error sending message:', chrome.runtime.lastError)
+              alert('Error: Could not run code in Earth Engine. Make sure you are on the Earth Engine Code Editor page.')
+              return
+            }
+            
+            if (response?.success) {
+              alert('Code successfully sent to Earth Engine.')
+            } else {
+              alert(`Error: ${response?.error || 'Could not run code in Earth Engine'}`)
+            }
+          }
+        )
+      } else {
+        alert('Error: No active tab found. Make sure you are on the Earth Engine Code Editor page.')
+      }
+    })
   }
 
   return (

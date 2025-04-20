@@ -1,55 +1,46 @@
 /**
  * Database Selector Agent for Earth Engine Agent
  * 
- * This agent selects appropriate databases from the Earth Engine catalog
- * based on the user's request and the task plan.
+ * This agent selects appropriate databases from Earth Engine catalog
+ * based on the user query and task plan.
  */
 
 import { ChatOpenAI } from "@langchain/openai";
 import { AgentState } from "./types";
 import { PromptTemplate } from "@langchain/core/prompts";
+import { getApiKey } from "../config";
 import { EarthEngineTools } from "../tools";
+import { DatasetEntry } from "../tools/databaseSearch";
 
 // Define the prompt template for the database selector
 const DATABASE_SELECTOR_PROMPT = PromptTemplate.fromTemplate(`
-You are a database selection agent for Google Earth Engine. Your role is to select the most appropriate 
-datasets for a given task based on the user's request and the task plan.
+You are a database selection agent for Google Earth Engine. Your job is to select the most appropriate 
+Earth Engine datasets for a given task.
 
 USER REQUEST: {input}
 TASK PLAN: {taskPlan}
-AVAILABLE DATASETS: {availableDatasets}
+AVAILABLE DATASETS:
+{availableDatabases}
 
-Based on the user's request and the task plan, select the most appropriate datasets from the available options.
-Be sure to consider:
-1. The type of analysis required (e.g., vegetation, water, elevation, etc.)
-2. The temporal needs (single time point vs. time series)
-3. The spatial resolution requirements
-4. Any specific indexes or bands mentioned in the request
+Select the most appropriate datasets from the available options to accomplish the task. For each selected 
+dataset, briefly explain why it's appropriate for the task.
 
-Return a JSON array of selected datasets with their IDs and a brief justification for each selection.
-Example format:
-[
-  {
-    "id": "DATASET_ID",
-    "name": "Dataset Name",
-    "justification": "This dataset is appropriate because..."
-  }
-]
+Consider the following factors:
+1. Spatial resolution - Is high spatial detail required?
+2. Temporal coverage - Is historical data needed? How recent should the data be?
+3. Update frequency - Does the task require the most up-to-date data?
+4. Data type - What physical variables are needed (e.g., elevation, temperature, vegetation)?
+5. Relevance to the specific task
 
-Keep it concise and limit your selection to at most 3 datasets that best fit the task.
+Return your selections in a well-formatted list with justifications for each choice.
+Be specific about which dataset IDs you are selecting from the provided list.
 `);
 
 // Create the database selector agent
 export const createDatabaseSelectorAgent = () => {
-  // Initialize the LLM
-  const model = new ChatOpenAI({
-    modelName: "gpt-3.5-turbo",
-    temperature: 0,
-  });
-
   // Create the database selector function
   return async (state: AgentState): Promise<AgentState> => {
-    // If we don't have a task plan yet, return the state unchanged
+    // If we don't have a task plan, return the state unchanged
     if (!state.taskPlan) {
       console.log("Database selector: No task plan available");
       return state;
@@ -58,69 +49,87 @@ export const createDatabaseSelectorAgent = () => {
     console.log("Database selector processing task plan");
 
     try {
-      // Search for relevant datasets based on the user input
-      const relevantDatasets = await EarthEngineTools.databaseSearch(state.input);
+      // Search for relevant databases based on the user's input
+      const searchResults = await EarthEngineTools.databaseSearch(state.input);
       
-      if (relevantDatasets.length === 0) {
+      if (!searchResults || searchResults.length === 0) {
         return {
           ...state,
-          selectedDatabases: [],
-          response: "I couldn't find any relevant Earth Engine datasets for your request. Could you provide more specific details about what kind of data you're looking for?"
+          response: "I couldn't find any relevant Earth Engine datasets for your request. Please try a different query."
         };
       }
+      
+      // Get API key from secure storage
+      const apiKey = await getApiKey();
+      
+      if (!apiKey) {
+        return {
+          ...state,
+          response: "OpenAI API key is not configured. Please set your API key in the settings."
+        };
+      }
+      
+      // Initialize the LLM with the API key
+      const model = new ChatOpenAI({
+        modelName: "gpt-3.5-turbo",
+        temperature: 0,
+        openAIApiKey: apiKey,
+        configuration: {
+          dangerouslyAllowBrowser: true // Required for running in browser extension
+        }
+      });
 
-      // Format the datasets for the prompt
-      const formattedDatasets = JSON.stringify(relevantDatasets, null, 2);
+      // Format the available databases for the prompt
+      const formattedDatabases = JSON.stringify(searchResults, null, 2);
 
-      // Generate the database selections using the LLM
+      // Generate database selections using the LLM
       const formattedPrompt = await DATABASE_SELECTOR_PROMPT.format({
         input: state.input,
         taskPlan: state.taskPlan,
-        availableDatasets: formattedDatasets
+        availableDatabases: formattedDatabases
       });
       
       const result = await model.invoke(formattedPrompt);
       
-      // Parse the LLM response to get the selected databases
+      // Extract database selections from the LLM response
       const selectionText = result.content.toString();
-      let selectedDatabases;
       
-      try {
-        // Extract JSON from the response - it might be embedded in text
-        const jsonMatch = selectionText.match(/\[[\s\S]*\]/);
-        if (jsonMatch) {
-          selectedDatabases = JSON.parse(jsonMatch[0]);
-        } else {
-          // Fallback - if we can't parse the JSON, use the raw response
-          selectedDatabases = [{ 
-            id: relevantDatasets[0].id, 
-            name: relevantDatasets[0].name,
-            justification: "Selected as best match for the request." 
-          }];
-        }
-      } catch (parseError) {
-        console.error("Error parsing database selection:", parseError);
-        selectedDatabases = [{ 
-          id: relevantDatasets[0].id, 
-          name: relevantDatasets[0].name,
-          justification: "Selected as fallback due to parsing error." 
-        }];
-      }
-
+      console.log("Database selections:", selectionText);
+      
+      // Extract selected database IDs from the selection text
+      const databaseIds = extractDatabaseIds(selectionText, searchResults);
+      
+      // Get the full database objects for the selected IDs
+      const selectedDatabases = searchResults.filter(db => databaseIds.includes(db.id));
+      
       console.log("Selected databases:", selectedDatabases);
 
       // Return the updated state
       return {
         ...state,
-        selectedDatabases
+        selectedDatabases,
+        databaseSelectionText: selectionText
       };
     } catch (error) {
       console.error("Error in database selector agent:", error);
       return {
         ...state,
-        selectedDatabases: [],
-        response: "I encountered an error while selecting appropriate Earth Engine datasets. Please try again with a more specific request."
+        response: "I encountered an error while selecting Earth Engine datasets. Please try again with a more specific request."
       };
     }
   };
-}; 
+};
+
+// Helper function to extract database IDs from the selection text
+function extractDatabaseIds(selectionText: string, availableDatabases: DatasetEntry[]): string[] {
+  const ids = new Set<string>();
+  
+  // Loop through all available databases and check if their ID is mentioned in the selection text
+  for (const db of availableDatabases) {
+    if (selectionText.includes(db.id)) {
+      ids.add(db.id);
+    }
+  }
+  
+  return Array.from(ids);
+} 
