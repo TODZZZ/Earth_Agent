@@ -1,0 +1,1 @@
+chrome.runtime.onInstalled.addListener(e=>{console.log("Earth Agent installed",e)});chrome.runtime.onMessage.addListener((e,n,r)=>(console.log("Background received message:",e,"from:",n),e.type==="TEST_CONNECTION"&&r({success:!0,message:"Background connection successful"}),!0));console.log("Earth Agent background script loaded");
