@@ -91,17 +91,17 @@ const initializeAgentSystem = async (): Promise<(input: string) => Promise<Agent
     const logs: string[] = ['Starting processing of request'];
 
     try {
-      if (!input) {
+        if (!input) {
         logToUI('Empty input received');
-        return {
-          response: "I couldn't process your request. Please provide a valid query.",
+          return {
+            response: "I couldn't process your request. Please provide a valid query.",
           code: "// No code was generated (empty input)",
           debugLog: ['Empty input received']
-        };
-      }
+          };
+        }
 
       // Initialize state with user input
-      let state: AgentState = { input };
+        let state: AgentState = { input };
       logs.push(`Initialized state with user input: "${input}"`);
       logToUI(`Initialized state with user input: "${input}"`);
       
@@ -247,7 +247,7 @@ const initializeAgentSystem = async (): Promise<(input: string) => Promise<Agent
           });
         }
         console.log('Selected datasets:', state.selectedDatabases?.length || 0);
-      } catch (error) {
+        } catch (error) {
         console.error('Error in dataset selection stage:', error);
         const errorMsg = `Error in dataset selection stage: ${error instanceof Error ? error.message : 'Unknown error'}`;
         logs.push(errorMsg);
@@ -401,7 +401,7 @@ const initializeAgentSystem = async (): Promise<(input: string) => Promise<Agent
  * Fallback response when no OpenAI API key is available
  */
 const noApiKeyFallback = async (_input: string): Promise<AgentResponse> => {
-  return {
+      return {
     response: 'OpenAI API key is not configured. Please set your API key in the settings.',
     code: '// Missing API key',
     debugLog: ['No API key found']

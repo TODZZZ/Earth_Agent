@@ -148,103 +148,49 @@ export const databaseSearch = async (
       console.error('Error fetching from GitHub catalog:', error);
     }
     
-    try {
-      // Fall back to the original Earth Engine search
-      console.log('Trying Earth Engine API search');
+    // Fall back to the original Earth Engine search
+    console.log('Falling back to Earth Engine API search');
+    await sendMessageToContentScript('SEARCH_DATASETS', {
+      search: searchTerm
+    });
+    
+    // Wait for the search results
+    const searchResults = await new Promise<any[]>((resolve) => {
+      const timeout = setTimeout(() => {
+        resolve([]);
+      }, 5000);
       
-      // Attempt to send message to content script with a timeout to catch connection errors
-      const contentScriptResponse = await Promise.race([
-        sendMessageToContentScript('SEARCH_DATASETS', { search: searchTerm }),
-        new Promise((_, reject) => setTimeout(() => reject(new Error('Content script connection timeout')), 3000))
-      ]).catch(error => {
-        console.warn('Could not connect to Earth Engine content script:', error);
-        return null;
-      });
-      
-      if (contentScriptResponse) {
-        // If we got a response, wait for results via window messaging
-        console.log('Content script connection successful, waiting for results');
-        
-        // Wait for the search results
-        const searchResults = await new Promise<any[]>((resolve) => {
-          const timeout = setTimeout(() => {
-            console.log('Timeout waiting for search results');
-            resolve([]);
-          }, 5000);
-          
-          const handleSearchResults = (event: MessageEvent) => {
-            if (event.data && event.data.type === 'SEARCH_RESULTS') {
-              clearTimeout(timeout);
-              window.removeEventListener('message', handleSearchResults);
-              resolve(event.data.results || []);
-            }
-          };
-          
-          window.addEventListener('message', handleSearchResults);
-        });
-        
-        console.log(`Received ${searchResults.length} datasets from Earth Engine search`);
-        
-        // Process and sort by timeframe relevance if available
-        if (searchResults.length > 0) {
-          const processedResults = searchResults.map((result: any) => ({
-            name: result.id,
-            description: result.description || 'No description available',
-            type: result.type || 'Unknown',
-            startDate: result.startDate || '',
-            endDate: result.endDate || '',
-            updateFrequency: result.updateFrequency || '',
-            provider: result.provider || '',
-            gsd: result.gsd || '',
-            source: 'Earth Engine API'
-          }));
-          
-          return scoreAndSortDatasetsByTime(processedResults, timeframe);
+      const handleSearchResults = (event: MessageEvent) => {
+        if (event.data && event.data.type === 'SEARCH_RESULTS') {
+          clearTimeout(timeout);
+          window.removeEventListener('message', handleSearchResults);
+          resolve(event.data.results || []);
         }
-      }
-    } catch (error) {
-      console.error('Error with Earth Engine API search:', error);
-    }
+      };
+      
+      window.addEventListener('message', handleSearchResults);
+    });
     
-    // If nothing found from external sources, generate fallback results from GEE Documentation
-    console.log('Using fallback from GEE Documentation');
-    const fallbackResults = generateFallbackDatasets(searchTerm, timeframe);
+    console.log(`Received ${searchResults.length} datasets from Earth Engine search`);
     
-    return fallbackResults;
+    // Process and sort by timeframe relevance if available
+    const processedResults = searchResults.map((result: any) => ({
+      name: result.id,
+      description: result.description || 'No description available',
+      type: result.type || 'Unknown',
+      startDate: result.startDate || '',
+      endDate: result.endDate || '',
+      updateFrequency: result.updateFrequency || '',
+      provider: result.provider || '',
+      gsd: result.gsd || '',
+      source: 'Earth Engine API'
+    }));
+    
+    return scoreAndSortDatasetsByTime(processedResults, timeframe);
   } catch (error) {
     console.error('Error searching for datasets:', error);
-    return generateFallbackDatasets(searchTerm, timeframe);
+    return [];
   }
-};
-
-/**
- * Generate fallback dataset results based on documentation
- */
-const generateFallbackDatasets = (searchTerm: string, timeframe?: { start?: string; end?: string }): any[] => {
-  // Use GEE documentation to create pseudo-datasets when external search fails
-  // Find relevant documentation snippets
-  const relatedDocs = GEEDocumentation.search(searchTerm, 10);
-  
-  // Convert documentation to dataset-like objects
-  const fallbackDatasets = relatedDocs.map((doc: DocumentationSnippet, index: number) => {
-    const classInfo = doc.apiClass || '';
-    const functionInfo = doc.apiFunction ? `.${doc.apiFunction}` : '';
-    
-    return {
-      name: `${classInfo}${functionInfo}`,
-      id: `gee_doc_${index}`,
-      description: doc.content,
-      type: doc.category || 'API',
-      startDate: '',
-      endDate: 'present',
-      provider: 'Google Earth Engine',
-      source: 'Documentation',
-      url: doc.url,
-      examples: doc.examples || []
-    };
-  });
-  
-  return fallbackDatasets;
 };
 
 /**
@@ -393,7 +339,7 @@ export const EarthEngineTools = {
       };
     } catch (error) {
       console.error('Error inspecting map:', error);
-      return {
+    return { 
         success: false,
         data: null,
         error: error instanceof Error ? error.message : 'Unknown error inspecting map'
@@ -491,7 +437,7 @@ export const EarthEngineTools = {
       };
     }
   },
-  
+
   /**
    * Get examples for a specific Earth Engine API
    */
