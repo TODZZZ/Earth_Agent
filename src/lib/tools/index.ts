@@ -4,7 +4,7 @@
  * This module exports the tools that can be used by agents.
  */
 
-import { searchEarthEngineDatabase, DatasetEntry } from './databaseSearch';
+import { DatasetEntry } from './databaseSearch';
 import { GEEDocumentation, DocumentationSnippet } from './geeDocumentation';
 
 // Define interfaces for tool responses
@@ -87,14 +87,275 @@ const sendMessageToContentScript = async (action: string, data: any): Promise<an
   });
 };
 
+/**
+ * Search for datasets in Earth Engine database
+ */
+export const databaseSearch = async (
+  searchTerm: string,
+  timeframe?: { start?: string; end?: string }
+): Promise<any[]> => {
+  console.log(`Searching for datasets matching: ${searchTerm}`);
+  if (timeframe) {
+    console.log(`With timeframe filter: ${timeframe.start || 'any'} to ${timeframe.end || 'present'}`);
+  }
+  
+  try {
+    // First try to search in the comprehensive dataset catalog from GitHub
+    try {
+      const response = await fetch('https://raw.githubusercontent.com/samapriya/Earth-Engine-Datasets-List/refs/heads/master/gee_catalog.json');
+      if (response.ok) {
+        const data = await response.json();
+        console.log(`Loaded ${data.length} datasets from GitHub catalog`);
+        
+        // Find datasets that match the search term (case insensitive)
+        const searchTermLower = searchTerm.toLowerCase();
+        let matchingDatasets = data.filter((dataset: any) => {
+          const id = (dataset.id || '').toLowerCase();
+          const title = (dataset.title || '').toLowerCase();
+          const description = (dataset.description || '').toLowerCase();
+          const type = (dataset.type || '').toLowerCase();
+          
+          return (
+            id.includes(searchTermLower) ||
+            title.includes(searchTermLower) ||
+            description.includes(searchTermLower) ||
+            type.includes(searchTermLower)
+          );
+        });
+        
+        // Score and sort datasets by timeframe relevance
+        matchingDatasets = scoreAndSortDatasetsByTime(matchingDatasets, timeframe);
+        
+        console.log(`Found ${matchingDatasets.length} matching datasets in GitHub catalog`);
+        
+        if (matchingDatasets.length > 0) {
+          // Map to a consistent format
+          return matchingDatasets.map((dataset: any) => ({
+            name: dataset.id,
+            description: dataset.title || 'No description available',
+            type: dataset.type || 'Unknown',
+            startDate: dataset.start_date || '',
+            endDate: dataset.end_date || '',
+            updateFrequency: dataset.update_frequency || '',
+            provider: dataset.provider || '',
+            gsd: dataset.gsd || '',
+            source: 'GitHub Catalog',
+            timeScore: dataset.timeScore // Include the score for debugging
+          }));
+        }
+      }
+    } catch (error) {
+      console.error('Error fetching from GitHub catalog:', error);
+    }
+    
+    try {
+      // Fall back to the original Earth Engine search
+      console.log('Trying Earth Engine API search');
+      
+      // Attempt to send message to content script with a timeout to catch connection errors
+      const contentScriptResponse = await Promise.race([
+        sendMessageToContentScript('SEARCH_DATASETS', { search: searchTerm }),
+        new Promise((_, reject) => setTimeout(() => reject(new Error('Content script connection timeout')), 3000))
+      ]).catch(error => {
+        console.warn('Could not connect to Earth Engine content script:', error);
+        return null;
+      });
+      
+      if (contentScriptResponse) {
+        // If we got a response, wait for results via window messaging
+        console.log('Content script connection successful, waiting for results');
+        
+        // Wait for the search results
+        const searchResults = await new Promise<any[]>((resolve) => {
+          const timeout = setTimeout(() => {
+            console.log('Timeout waiting for search results');
+            resolve([]);
+          }, 5000);
+          
+          const handleSearchResults = (event: MessageEvent) => {
+            if (event.data && event.data.type === 'SEARCH_RESULTS') {
+              clearTimeout(timeout);
+              window.removeEventListener('message', handleSearchResults);
+              resolve(event.data.results || []);
+            }
+          };
+          
+          window.addEventListener('message', handleSearchResults);
+        });
+        
+        console.log(`Received ${searchResults.length} datasets from Earth Engine search`);
+        
+        // Process and sort by timeframe relevance if available
+        if (searchResults.length > 0) {
+          const processedResults = searchResults.map((result: any) => ({
+            name: result.id,
+            description: result.description || 'No description available',
+            type: result.type || 'Unknown',
+            startDate: result.startDate || '',
+            endDate: result.endDate || '',
+            updateFrequency: result.updateFrequency || '',
+            provider: result.provider || '',
+            gsd: result.gsd || '',
+            source: 'Earth Engine API'
+          }));
+          
+          return scoreAndSortDatasetsByTime(processedResults, timeframe);
+        }
+      }
+    } catch (error) {
+      console.error('Error with Earth Engine API search:', error);
+    }
+    
+    // If nothing found from external sources, generate fallback results from GEE Documentation
+    console.log('Using fallback from GEE Documentation');
+    const fallbackResults = generateFallbackDatasets(searchTerm, timeframe);
+    
+    return fallbackResults;
+  } catch (error) {
+    console.error('Error searching for datasets:', error);
+    return generateFallbackDatasets(searchTerm, timeframe);
+  }
+};
+
+/**
+ * Generate fallback dataset results based on documentation
+ */
+const generateFallbackDatasets = (searchTerm: string, timeframe?: { start?: string; end?: string }): any[] => {
+  // Use GEE documentation to create pseudo-datasets when external search fails
+  // Find relevant documentation snippets
+  const relatedDocs = GEEDocumentation.search(searchTerm, 10);
+  
+  // Convert documentation to dataset-like objects
+  const fallbackDatasets = relatedDocs.map((doc: DocumentationSnippet, index: number) => {
+    const classInfo = doc.apiClass || '';
+    const functionInfo = doc.apiFunction ? `.${doc.apiFunction}` : '';
+    
+    return {
+      name: `${classInfo}${functionInfo}`,
+      id: `gee_doc_${index}`,
+      description: doc.content,
+      type: doc.category || 'API',
+      startDate: '',
+      endDate: 'present',
+      provider: 'Google Earth Engine',
+      source: 'Documentation',
+      url: doc.url,
+      examples: doc.examples || []
+    };
+  });
+  
+  return fallbackDatasets;
+};
+
+/**
+ * Score and sort datasets based on their relevance to the requested timeframe
+ * If no timeframe is provided, prioritize the most recent datasets
+ */
+const scoreAndSortDatasetsByTime = (datasets: any[], timeframe?: { start?: string; end?: string }): any[] => {
+  // Return datasets as-is if there's no timeframe to consider
+  if (!timeframe) {
+    return datasets.sort((a, b) => {
+      // If no timeframe specified, prioritize datasets with more recent end dates
+      const aEndDate = a.endDate || a.end_date || '';
+      const bEndDate = b.endDate || b.end_date || '';
+      if (aEndDate === 'present' || aEndDate.includes('now')) return -1;
+      if (bEndDate === 'present' || bEndDate.includes('now')) return 1;
+      return aEndDate > bEndDate ? -1 : aEndDate < bEndDate ? 1 : 0;
+    });
+  }
+  
+  const currentYear = new Date().getFullYear().toString();
+  const scoredDatasets = datasets.map(dataset => {
+    // Get dataset date information
+    const startDate = dataset.startDate || dataset.start_date || '';
+    const endDate = dataset.endDate || dataset.end_date || '';
+    
+    let score = 0;
+    
+    // Extract years from dates for comparison
+    const datasetStartYear = startDate ? startDate.substring(0, 4) : '';
+    const datasetEndYear = endDate && !endDate.includes('present') && !endDate.includes('now') 
+      ? endDate.substring(0, 4) 
+      : currentYear;
+    
+    const requestStartYear = timeframe.start ? timeframe.start.substring(0, 4) : '';
+    const requestEndYear = timeframe.end ? timeframe.end.substring(0, 4) : currentYear;
+    
+    // Score based on overlap with requested timeframe
+    if (requestStartYear && requestEndYear) {
+      // Full timeframe specified
+      if (datasetStartYear && datasetEndYear) {
+        // Check for overlap
+        if (
+          (datasetStartYear <= requestEndYear && datasetEndYear >= requestStartYear) ||
+          endDate === 'present' || 
+          endDate.includes('now')
+        ) {
+          // Dataset overlaps with requested timeframe
+          score += 100;
+          
+          // Bonus points for datasets that fully contain the requested period
+          if (datasetStartYear <= requestStartYear && 
+             (datasetEndYear >= requestEndYear || endDate === 'present' || endDate.includes('now'))) {
+            score += 50;
+          }
+          
+          // Bonus for datasets that are ongoing/current
+          if (endDate === 'present' || endDate.includes('now')) {
+            score += 20;
+          }
+        }
+      }
+    } else if (requestStartYear) {
+      // Only start year specified (looking for data since a specific time)
+      if (datasetStartYear && datasetStartYear <= requestStartYear &&
+         (datasetEndYear >= requestStartYear || endDate === 'present' || endDate.includes('now'))) {
+        score += 100;
+        
+        // Bonus for datasets that are ongoing/current
+        if (endDate === 'present' || endDate.includes('now')) {
+          score += 30;
+        }
+      }
+    } else {
+      // No specific timeframe, prioritize recent and ongoing datasets
+      if (endDate === 'present' || endDate.includes('now')) {
+        score += 100;
+        
+        // Higher score for longer running datasets (more historical context)
+        if (datasetStartYear) {
+          const yearsRunning = parseInt(currentYear) - parseInt(datasetStartYear);
+          score += Math.min(yearsRunning, 30); // Cap at 30 years
+        }
+      } else if (datasetEndYear) {
+        // Score based on recency
+        const yearsAgo = parseInt(currentYear) - parseInt(datasetEndYear);
+        score += Math.max(0, 100 - yearsAgo * 10); // Decrease score by 10 for each year old
+      }
+    }
+    
+    // Add the score to the dataset for debugging
+    return {
+      ...dataset,
+      timeScore: score
+    };
+  });
+  
+  // Sort by score (highest first)
+  return scoredDatasets.sort((a, b) => b.timeScore - a.timeScore);
+};
+
 // Export the Earth Engine tools
 export const EarthEngineTools = {
   /**
    * Search Earth Engine Database catalog
    */
-  databaseSearch: async (query: string): Promise<DatasetEntry[]> => {
+  databaseSearch: async (query: string, timeframe?: { start?: string; end?: string }): Promise<DatasetEntry[]> => {
     console.log('Searching Earth Engine database for:', query);
-    return searchEarthEngineDatabase(query);
+    if (timeframe) {
+      console.log('With timeframe:', timeframe);
+    }
+    return databaseSearch(query, timeframe);
   },
 
   /**

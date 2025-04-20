@@ -30,7 +30,7 @@ const Sidepanel: React.FC = () => {
   };
   
   return (
-    <div className="flex flex-col h-screen">
+    <div className="flex flex-col h-full w-full">
       <header className="p-4 border-b">
         <h1 className="text-xl font-bold mb-2">Earth Agent</h1>
         <p className="text-sm text-gray-600">
@@ -38,13 +38,13 @@ const Sidepanel: React.FC = () => {
         </p>
       </header>
       
-      <main className="flex-1 overflow-auto p-4 flex flex-col">
+      <main className="flex-1 overflow-auto p-4 flex flex-col w-full">
         {isLoading ? (
           <div className="flex items-center justify-center h-full">
             <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-green-500"></div>
           </div>
         ) : !isApiKeyConfigured ? (
-          <div className="flex-1 flex items-center justify-center">
+          <div className="flex-1 flex items-center justify-center w-full">
             <div className="w-full max-w-md">
               <ApiKeyForm onApiKeySet={handleApiKeySet} />
             </div>

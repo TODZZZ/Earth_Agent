@@ -84,7 +84,7 @@ const ApiKeyForm: React.FC<ApiKeyFormProps> = ({ onApiKeySet }) => {
   return (
     <div className="p-4 bg-white rounded-lg shadow-md">
       <h2 className="text-xl font-semibold mb-4">API Key Configuration</h2>
-      <p className="mb-4 text-gray-700">
+      <p className="mb-4 text-sm text-gray-700">
         To use the Earth Agent, you need to provide your OpenAI API key. 
         Your key will be stored securely in your browser's local storage.
       </p>
