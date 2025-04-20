@@ -1,335 +1,365 @@
 /**
- * Agent System for Earth Engine Agent
+ * Minimal Agentic System for Earth Engine Agent
  * 
- * This module exports the main agent system that coordinates all sub-agents using LangGraph.
+ * A simple, dependency-free implementation of the agent workflow.
  */
 
 import { AgentResponse, AgentState } from '@/lib/agents/types';
-import { createPlannerAgent } from './planner';
-import { createDatabaseSelectorAgent } from './databaseSelector';
-import { createCodeGeneratorAgent } from './codeGenerator';
-import { createCodeDebuggerAgent } from './codeDebugger';
-import { createSummarizerAgent } from './summarizer';
+import { getApiKey } from '../config';
 import { EarthEngineTools } from '../tools';
 
-// Import from "@langchain/langgraph/web" for browser compatibility
-import { END, START, StateGraph, Annotation } from "@langchain/langgraph/web";
-
-// Custom error class to provide more context about agent failures
-export class AgentError extends Error {
-  agent: string;
-  phase: string;
-  details?: any;
-
-  constructor(message: string, agent: string, phase: string, details?: any) {
-    super(message);
-    this.name = 'AgentError';
-    this.agent = agent;
-    this.phase = phase;
-    this.details = details;
-  }
-}
+/**
+ * Fallback response when an error occurs during processing
+ */
+const errorFallback = (error: unknown): AgentResponse => {
+  return {
+    response: `I encountered an unexpected error while processing your request: ${error instanceof Error ? error.message : 'Unknown error'}. Please try again with a different query.`,
+    code: "// Error processing request",
+    debugLog: [error instanceof Error ? error.message : 'Unknown error']
+  };
+};
 
 /**
- * Initialize the agent system and return a function that executes the workflow.
- * This implementation uses LangGraph's StateGraph for proper workflow management.
+ * Initialize the agent system with a simple sequential workflow
  */
-const initializeAgentSystem = async () => {
-  console.log('Initializing Earth Agent system');
-  
-  try {
-    // Create the individual agents
-    const plannerAgent = createPlannerAgent();
-    const databaseSelectorAgent = createDatabaseSelectorAgent();
-    const codeGeneratorAgent = createCodeGeneratorAgent();
-    const codeDebuggerAgent = createCodeDebuggerAgent();
-    const summarizerAgent = createSummarizerAgent();
-    
-    // Validate that all agents were created successfully
-    if (!plannerAgent || !databaseSelectorAgent || !codeGeneratorAgent || 
-        !codeDebuggerAgent || !summarizerAgent) {
-      throw new Error('Failed to initialize one or more agents');
+const initializeAgentSystem = async (): Promise<(input: string) => Promise<AgentResponse>> => {
+  console.log('Initializing minimal Earth Agent system');
+
+  // Get OpenAI API key
+  const apiKey = await getApiKey();
+  if (!apiKey) {
+    console.error('No API key found');
+    return noApiKeyFallback;
+  }
+
+  // Initialize simple fetch-based model access function
+  const callChatCompletionAPI = async (prompt: string, systemMessage: string) => {
+    try {
+      const response = await fetch('https://api.openai.com/v1/chat/completions', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${apiKey}`
+        },
+        body: JSON.stringify({
+          model: 'gpt-4o',
+          messages: [
+            { role: 'system', content: systemMessage },
+            { role: 'user', content: prompt }
+          ],
+          temperature: 0
+        })
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(`OpenAI API error: ${response.status} - ${JSON.stringify(errorData)}`);
+      }
+
+      const data = await response.json();
+      return data.choices[0].message.content;
+    } catch (error) {
+      console.error('Error calling OpenAI API:', error);
+      throw error;
     }
-    
-    // Define our graph state
-    const GraphState = Annotation.Root({
-      // User input
-      input: Annotation<string>(),
-      
-      // Task planning
-      taskPlan: Annotation<string | undefined>(),
-      
-      // Database selection
-      selectedDatabases: Annotation<any[] | undefined>(), 
-      databaseSelectionText: Annotation<string | undefined>(),
-      
-      // Code generation
-      generatedCode: Annotation<string | undefined>(),
-      
-      // Debugging
-      errors: Annotation<string | undefined>(),
-      debugLog: Annotation<string[] | undefined>({
-        reducer: (existing: string[] | undefined, next: string[] | undefined) => 
-          (existing || []).concat(next || [])
-      }),
-      
-      // Inspection results from Earth Engine
-      inspectionResults: Annotation<string | undefined>(),
-      
-      // Final response to user
-      response: Annotation<string | undefined>()
-    });
-    
-    // Define each node's function
-    const plannerNode = async (state: typeof GraphState.State) => {
-      try {
-        console.log('Step 1: Planning');
-        const result = await plannerAgent(state as AgentState);
-        return result as typeof GraphState.State;
-      } catch (error) {
-        console.error('Error in planner node:', error);
+  };
+
+  console.log('Model access function initialized successfully');
+
+  // Create the processing function with proper type safety
+  const processingFunction = async (input: string): Promise<AgentResponse> => {
+    console.log('Processing request:', input);
+
+    try {
+      if (!input) {
         return {
-          response: `Planning failed: ${error instanceof Error ? error.message : 'Unknown error'}`,
-          debugLog: [`Planner error: ${error instanceof Error ? error.message : 'Unknown error'}`]
-        } as typeof GraphState.State;
+          response: "I couldn't process your request. Please provide a valid query.",
+          code: "// No code was generated (empty input)"
+        };
       }
-    };
-    
-    const databaseSelectorNode = async (state: typeof GraphState.State) => {
+
+      // Initialize state with user input
+      let state: AgentState = { input };
+      
+      // STEP 1: Analyze the request and create a plan
       try {
-        console.log('Step 2: Database Selection');
-        if (state.response) {
-          // Skip this step if there's already a response (planner rejected task)
-          return state;
-        }
-        const result = await databaseSelectorAgent(state as AgentState);
-        return result as typeof GraphState.State;
-      } catch (error) {
-        console.error('Error in database selector node:', error);
-        return {
-          ...state,
-          response: `Database selection failed: ${error instanceof Error ? error.message : 'Unknown error'}`,
-          debugLog: [...(state.debugLog || []), `Database selector error: ${error instanceof Error ? error.message : 'Unknown error'}`]
-        } as typeof GraphState.State;
-      }
-    };
-    
-    const codeGeneratorNode = async (state: typeof GraphState.State) => {
-      try {
-        console.log('Step 3: Code Generation');
-        if (state.response) {
-          // Skip this step if there's already a response
-          return state;
-        }
-        const result = await codeGeneratorAgent(state as AgentState);
-        return result as typeof GraphState.State;
-      } catch (error) {
-        console.error('Error in code generator node:', error);
-        return {
-          ...state,
-          response: `Code generation failed: ${error instanceof Error ? error.message : 'Unknown error'}`,
-          debugLog: [...(state.debugLog || []), `Code generator error: ${error instanceof Error ? error.message : 'Unknown error'}`]
-        } as typeof GraphState.State;
-      }
-    };
-    
-    const codeExecutionNode = async (state: typeof GraphState.State) => {
-      try {
-        console.log('Step 4: Executing code');
-        if (state.response || !state.generatedCode) {
-          // Skip this step if there's already a response or no code
-          return state;
-        }
+        console.log('Step 1: Analyzing request and creating plan');
         
-        // Run the code in Earth Engine
-        const runResult = await EarthEngineTools.runCode(state.generatedCode);
-        console.log('Code execution result:', runResult);
+        // First, assess if the problem is feasible with Earth Engine
+        const assessmentResult = await EarthEngineTools.assessProblem(input);
+        console.log('Feasibility assessment:', assessmentResult);
         
-        // Check for errors in the console
-        const consoleCheckResult = await EarthEngineTools.checkConsole();
-        if (consoleCheckResult.success && consoleCheckResult.errors && 
-            Array.isArray(consoleCheckResult.errors) && consoleCheckResult.errors.length > 0) {
-          
-          console.log('Detected errors:', consoleCheckResult.errors);
-          const errorMessage = consoleCheckResult.errors
-            .map((e: {level: string, message: string}) => `${e.level}: ${e.message}`)
-            .join('\n');
-          
+        if (!assessmentResult.feasible) {
           return {
-            ...state,
-            errors: errorMessage
-          } as typeof GraphState.State;
-        }
-        
-        // Inspect the map
-        console.log('Step 6: Inspecting results');
-        const inspectionResult = await EarthEngineTools.inspectMap({lat: 37.7749, lng: -122.4194});
-        if (inspectionResult && inspectionResult.data) {
-          return {
-            ...state,
-            inspectionResults: typeof inspectionResult.data === 'string' 
-              ? inspectionResult.data 
-              : JSON.stringify(inspectionResult.data, null, 2)
-          } as typeof GraphState.State;
-        }
-        
-        return state;
-      } catch (error) {
-        console.error('Error in code execution node:', error);
-        return {
-          ...state,
-          errors: error instanceof Error ? error.message : 'Unknown error during execution',
-          debugLog: [...(state.debugLog || []), `Code execution error: ${error instanceof Error ? error.message : 'Unknown error'}`]
-        } as typeof GraphState.State;
-      }
-    };
-    
-    const codeDebuggerNode = async (state: typeof GraphState.State) => {
-      try {
-        console.log('Step 5: Debugging code');
-        if (!state.errors || !state.generatedCode) {
-          // Skip this step if there are no errors or no code
-          return state;
-        }
-        
-        const result = await codeDebuggerAgent(state as AgentState);
-        const debuggedState = result as typeof GraphState.State;
-        
-        // Try running the fixed code if available
-        if (debuggedState.generatedCode && debuggedState.generatedCode !== state.generatedCode) {
-          console.log('Retrying with fixed code');
-          try {
-            const retryResult = await EarthEngineTools.runCode(debuggedState.generatedCode);
-            console.log('Retry result:', retryResult);
-          } catch (retryError) {
-            console.error('Error retrying fixed code:', retryError);
-          }
-        }
-        
-        return debuggedState;
-      } catch (error) {
-        console.error('Error in code debugger node:', error);
-        return {
-          ...state,
-          debugLog: [...(state.debugLog || []), `Code debugger error: ${error instanceof Error ? error.message : 'Unknown error'}`]
-        } as typeof GraphState.State;
-      }
-    };
-    
-    const summarizerNode = async (state: typeof GraphState.State) => {
-      try {
-        console.log('Step 7: Summarizing');
-        if (state.response) {
-          // If there's already a response (error occurred earlier), skip summarization
-          return state;
-        }
-        
-        const result = await summarizerAgent(state as AgentState);
-        return result as typeof GraphState.State;
-      } catch (error) {
-        console.error('Error in summarizer node:', error);
-        return {
-          ...state,
-          response: state.response || 'I generated some code based on your request, but encountered an error summarizing the results.',
-          debugLog: [...(state.debugLog || []), `Summarizer error: ${error instanceof Error ? error.message : 'Unknown error'}`]
-        } as typeof GraphState.State;
-      }
-    };
-    
-    // Create the graph definition with conditional routing
-    const workflow = new StateGraph(GraphState)
-      .addNode("planner", plannerNode)
-      .addNode("databaseSelector", databaseSelectorNode)
-      .addNode("codeGenerator", codeGeneratorNode)
-      .addNode("codeExecution", codeExecutionNode)
-      .addNode("codeDebugger", codeDebuggerNode)
-      .addNode("summarizer", summarizerNode);
-    
-    // Define edges
-    workflow
-      // Start with the planner
-      .addEdge(START, "planner")
-      
-      // If planner provides a response, end workflow. Otherwise, continue to database selection
-      .addConditionalEdges(
-        "planner",
-        (state: any) => state.response ? "end" : "databaseSelector",
-        {
-          end: END,
-          databaseSelector: "databaseSelector"
-        }
-      )
-      
-      // From database selector to code generator
-      .addEdge("databaseSelector", "codeGenerator")
-      
-      // From code generator to code execution
-      .addEdge("codeGenerator", "codeExecution")
-      
-      // If execution had errors, debug first. Otherwise, go straight to summarizer
-      .addConditionalEdges(
-        "codeExecution",
-        (state: any) => state.errors ? "codeDebugger" : "summarizer",
-        {
-          codeDebugger: "codeDebugger",
-          summarizer: "summarizer"
-        }
-      )
-      
-      // From debugger to summarizer
-      .addEdge("codeDebugger", "summarizer")
-      
-      // From summarizer to end
-      .addEdge("summarizer", END);
-    
-    // Compile the workflow
-    const app = workflow.compile();
-    console.log('Agent workflow compiled successfully');
-    
-    // Return a function that executes the workflow
-    return async (input: string): Promise<AgentResponse> => {
-      console.log('Agent system received input:', input);
-      
-      try {
-        if (!input) {
-          return {
-            response: "I couldn't process your request. Please provide a valid query.",
-            code: "// No code was generated (empty input)"
+            response: `I'm sorry, but I don't think Google Earth Engine is the right tool for this request. ${assessmentResult.explanation}`,
+            code: "// Task not feasible with Earth Engine"
           };
         }
         
-        // Execute the workflow with the initial state
-        const result = await app.invoke({ input });
+        // Generate a plan using the model
+        const planSystemPrompt = `You are a planning agent for Google Earth Engine tasks.
+        Analyze user requests and create detailed plans for fulfilling them using Google Earth Engine.`;
         
-        // Extract the response
-        return {
-          response: result.response || 'No response was generated.',
-          code: result.generatedCode,
-          debugLog: result.debugLog
-        };
+        const planPrompt = `Analyze the following request and create a detailed plan for fulfilling it using Google Earth Engine:
+        
+        ${input}
+        
+        Your plan should include:
+        1. The specific Earth Engine datasets that might be useful
+        2. The processing steps required
+        3. How to visualize or present the results
+        
+        Be specific and detailed in your plan.`;
+        
+        const taskPlan = await callChatCompletionAPI(planPrompt, planSystemPrompt);
+        
+        // Update state with the plan
+        state.taskPlan = taskPlan;
+        console.log('Plan created:', state.taskPlan);
       } catch (error) {
-        console.error('Error in agent workflow:', error);
-        
-        // Return a fallback response in case of error
+        console.error('Error in planning stage:', error);
         return {
-          response: `I encountered an error while processing your request: ${error instanceof Error ? error.message : 'Unknown error'}. Please try again with a more specific request.`,
-          code: '// Error processing request',
-          debugLog: error instanceof Error ? [error.message] : ['Unknown error']
+          response: `I encountered an error while planning how to approach your request: ${error instanceof Error ? error.message : 'Unknown error'}. Please try again with a more specific query.`,
+          code: "// Error in planning stage"
         };
       }
-    };
-  } catch (initError) {
-    console.error('Error initializing agent system:', initError);
-    
-    // Return a minimal function that just reports the initialization error
-    return async (_input: string): Promise<AgentResponse> => {
-      return {
-        response: `The Earth Agent system could not be initialized. Error: ${initError instanceof Error ? initError.message : 'Unknown initialization error'}`,
-        code: '// System initialization error',
-        debugLog: initError instanceof Error ? [initError.message] : ['Unknown initialization error']
-      };
-    };
+      
+      // STEP 2: Select relevant datasets
+      try {
+        console.log('Step 2: Selecting relevant datasets');
+        
+        // Only proceed if we have a plan
+        if (!state.taskPlan) {
+          throw new Error('No task plan available');
+        }
+        
+        // Use model to extract dataset needs from the plan
+        const datasetSystemPrompt = `You are a data specialist for Google Earth Engine.
+        Identify specific datasets that would be most relevant for Earth Engine tasks.`;
+        
+        const datasetPrompt = `Based on the following Earth Engine task plan, identify the specific datasets that would be most relevant:
+        
+        ${state.taskPlan}
+        
+        List the top 3-5 most relevant Earth Engine datasets for this task, with a brief explanation of why each is appropriate.`;
+        
+        const datasetSelectionText = await callChatCompletionAPI(datasetPrompt, datasetSystemPrompt);
+        
+        // Search for datasets based on this analysis
+        const searchTerms = extractSearchTerms(datasetSelectionText);
+        let allDatasets: any[] = [];
+        
+        for (const term of searchTerms) {
+          const foundDatasets = await EarthEngineTools.databaseSearch(term);
+          allDatasets = [...allDatasets, ...foundDatasets];
+        }
+        
+        // Remove duplicates and limit to top 5
+        const uniqueDatasets = removeDuplicateDatasets(allDatasets).slice(0, 5);
+        
+        // Update state with selected datasets
+        state.selectedDatabases = uniqueDatasets;
+        state.databaseSelectionText = datasetSelectionText;
+        
+        console.log('Selected datasets:', state.selectedDatabases?.length || 0);
+      } catch (error) {
+        console.error('Error in dataset selection stage:', error);
+        return {
+          response: `I encountered an error while selecting appropriate datasets: ${error instanceof Error ? error.message : 'Unknown error'}. Please try again with a more specific request.`,
+          code: "// Error in dataset selection stage"
+        };
+      }
+      
+      // STEP 3: Generate Earth Engine code
+      try {
+        console.log('Step 3: Generating Earth Engine code');
+        
+        // Only proceed if we have a plan and datasets
+        if (!state.taskPlan || !state.selectedDatabases) {
+          throw new Error('Missing task plan or datasets');
+        }
+        
+        // Format datasets for prompt
+        const datasetsFormatted = formatDatasetsForPrompt(state.selectedDatabases);
+        
+        // Generate code using the model
+        const codeSystemPrompt = `You are an expert in Google Earth Engine JavaScript programming.
+        Write clean, efficient, and well-commented code that addresses user tasks.`;
+        
+        const codePrompt = `Create Google Earth Engine JavaScript code for the following task:
+        
+        TASK: ${state.input}
+        
+        PLAN: ${state.taskPlan}
+        
+        AVAILABLE DATASETS:
+        ${datasetsFormatted}
+        
+        Write clean, efficient Earth Engine code that accomplishes this task. Include comments to explain your approach.
+        The code should be ready to run in the Earth Engine Code Editor. Return ONLY the JavaScript code.`;
+        
+        const codeResponse = await callChatCompletionAPI(codePrompt, codeSystemPrompt);
+        const generatedCode = extractCodeBlock(codeResponse);
+        
+        // Update state with generated code
+        state.generatedCode = generatedCode;
+        console.log('Code generated successfully');
+      } catch (error) {
+        console.error('Error in code generation stage:', error);
+        return {
+          response: `I encountered an error while generating Earth Engine code: ${error instanceof Error ? error.message : 'Unknown error'}. Please try again with a more specific request.`,
+          code: "// Error in code generation"
+        };
+      }
+      
+      // STEP 4: Create final response
+      try {
+        console.log('Step 4: Creating final response');
+        
+        // Only proceed if we have generated code
+        if (!state.generatedCode) {
+          throw new Error('No code was generated');
+        }
+        
+        // Generate a summary response using the model
+        const summarySystemPrompt = `You are an Earth science educator explaining Google Earth Engine concepts to users.
+        Create clear, concise summaries that non-experts can understand.`;
+        
+        const summaryPrompt = `Create a clear, concise summary of the following Earth Engine task:
+        
+        USER REQUEST: ${state.input}
+        
+        GENERATED CODE: ${state.generatedCode}
+        
+        Explain what the code does in simple terms, how it addresses the user's request, and how they can use it.`;
+        
+        const response = await callChatCompletionAPI(summaryPrompt, summarySystemPrompt);
+        
+        // Return the final agent response
+        return {
+          response: response,
+          code: state.generatedCode,
+          debugLog: [`Task completed successfully`]
+        };
+      } catch (error) {
+        console.error('Error in response generation stage:', error);
+        
+        // Fallback to a simpler response if summary fails
+        return {
+          response: "I've generated Earth Engine code based on your request. You can run this code in the Earth Engine Code Editor to accomplish your task.",
+          code: state.generatedCode || "// No code was generated",
+          debugLog: [`Error in response generation: ${error instanceof Error ? error.message : 'Unknown error'}`]
+        };
+      }
+    } catch (error) {
+      console.error('Error in processing user request:', error);
+      return errorFallback(error);
+    }
+  };
+
+  // Add defensive check before returning
+  if (typeof processingFunction !== 'function') {
+    console.error('Failed to initialize processing function properly');
+    return noApiKeyFallback; // Return fallback as a safety measure
   }
+
+  // Return a properly typed wrapper function for the processingFunction
+  return (userInput: string): Promise<AgentResponse> => {
+    if (!userInput || typeof userInput !== 'string') {
+      console.error('Invalid input provided to agent system:', userInput);
+      return Promise.resolve({
+        response: "I couldn't process your request. Please provide a valid query.",
+        code: "// No code was generated (invalid input)",
+        debugLog: ["Invalid input type provided"]
+      });
+    }
+    
+    return processingFunction(userInput);
+  };
+};
+
+/**
+ * Fallback response when no OpenAI API key is available
+ */
+const noApiKeyFallback = async (_input: string): Promise<AgentResponse> => {
+  return {
+    response: 'OpenAI API key is not configured. Please set your API key in the settings.',
+    code: '// Missing API key',
+    debugLog: ['No API key found']
+  };
+};
+
+/**
+ * Helper function to extract search terms from dataset selection text
+ */
+const extractSearchTerms = (text: string): string[] => {
+  // Simple implementation - extract phrases that might be dataset names or topics
+  const lines = text.split('\n');
+  const terms: string[] = [];
+  
+  for (const line of lines) {
+    // Look for dataset names, which often have specific patterns
+    if (line.includes('Landsat') || line.includes('MODIS') || line.includes('Sentinel')) {
+      const matches = line.match(/\b(Landsat|MODIS|Sentinel)[a-zA-Z0-9\s-]*/g);
+      if (matches) terms.push(...matches);
+    }
+    
+    // Look for common Earth observation terms
+    const keywords = ['elevation', 'land cover', 'precipitation', 'temperature', 'vegetation', 'forest', 'water', 'snow', 'ice', 'urban', 'population'];
+    for (const keyword of keywords) {
+      if (line.toLowerCase().includes(keyword)) {
+        terms.push(keyword);
+      }
+    }
+  }
+  
+  // Add some general search terms if specific ones aren't found
+  if (terms.length === 0) {
+    terms.push('Landsat', 'MODIS', 'elevation', 'land cover');
+  }
+  
+  // Remove duplicates and return
+  return [...new Set(terms)];
+};
+
+/**
+ * Helper function to remove duplicate datasets
+ */
+const removeDuplicateDatasets = (datasets: any[]): any[] => {
+  const uniqueIds = new Set();
+  return datasets.filter(dataset => {
+    if (uniqueIds.has(dataset.id)) {
+      return false;
+    }
+    uniqueIds.add(dataset.id);
+    return true;
+  });
+};
+
+/**
+ * Format datasets for inclusion in a prompt
+ */
+const formatDatasetsForPrompt = (datasets: any[]): string => {
+  return datasets.map(dataset => 
+    `- ${dataset.name} (${dataset.id}): ${dataset.description || 'No description available'}`
+  ).join('\n');
+};
+
+/**
+ * Extract code block from model response
+ */
+const extractCodeBlock = (text: string): string => {
+  // Try to extract code between markdown code fences
+  const codeBlockRegex = /```(?:javascript|js)?\s*([\s\S]*?)```/;
+  const match = text.match(codeBlockRegex);
+  
+  if (match && match[1]) {
+    return match[1].trim();
+  }
+  
+  // If no code block is found, return the entire text
+  // (this handles cases where the model might not use code fences)
+  return text;
 };
 
 export { initializeAgentSystem }; 

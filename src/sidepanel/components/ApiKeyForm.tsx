@@ -51,7 +51,7 @@ const ApiKeyForm: React.FC<ApiKeyFormProps> = ({ onApiKeySet }) => {
     }
     
     // Basic OpenAI key format validation
-    const openAIKeyPattern = /^sk-[a-zA-Z0-9]{32,}$/;
+    const openAIKeyPattern = /^sk-[a-zA-Z0-9_-]{32,}$/;
     if (!openAIKeyPattern.test(key.trim())) {
       setError('Invalid API key format. OpenAI keys should start with "sk-" followed by at least 32 characters.');
       return false;

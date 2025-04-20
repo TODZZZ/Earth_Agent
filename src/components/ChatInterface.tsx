@@ -26,6 +26,7 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({ onQuerySubmit }) =
   const [input, setInput] = useState('')
   const [isLoading, setIsLoading] = useState(false)
   const [agentSystem, setAgentSystem] = useState<any>(null)
+  const [agentInitError, setAgentInitError] = useState<string | null>(null)
   const messagesEndRef = useRef<HTMLDivElement>(null)
 
   // Initialize the agent system on component mount
@@ -34,10 +35,19 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({ onQuerySubmit }) =
       try {
         console.log('Initializing agent system...')
         const system = await initializeAgentSystem()
-        console.log('Agent system initialized')
-        setAgentSystem(system)
+        
+        // Add defensive check to ensure system is a function
+        if (typeof system !== 'function') {
+          console.error('Agent system is not a function!', system)
+          throw new Error('Agent system initialization failed: system is not a function')
+        }
+        
+        console.log('Agent system initialized successfully')
+        setAgentSystem(() => system) // Wrap in arrow function to ensure function type
       } catch (error) {
         console.error('Error initializing agent system:', error)
+        // Set error state to show in UI
+        setAgentInitError(error instanceof Error ? error.message : 'Unknown initialization error')
       }
     }
     setup()
@@ -218,6 +228,31 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({ onQuerySubmit }) =
   return (
     <div className="flex flex-col h-full">
       <div className="flex-1 overflow-auto mb-4">
+        {/* Display error during initialization */}
+        {agentInitError && (
+          <div className="mb-4 p-3 rounded-lg bg-red-100 mr-8">
+            <div className="font-semibold mb-1 text-red-700">
+              Error Initializing Earth Agent
+            </div>
+            <div className="whitespace-pre-wrap">{agentInitError}</div>
+            <div className="mt-2 text-sm text-gray-600">
+              Please check your API key configuration in the settings or try again later.
+            </div>
+          </div>
+        )}
+
+        {/* Display loading indicator during initialization */}
+        {!agentSystem && !agentInitError && (
+          <div className="mb-4 p-3 rounded-lg bg-blue-50 mr-8">
+            <div className="font-semibold mb-1">
+              Earth Agent
+            </div>
+            <div className="flex items-center text-gray-600">
+              <div className="animate-pulse mr-2">Initializing Earth Agent system...</div>
+            </div>
+          </div>
+        )}
+        
         {messages.map(message => (
           <div 
             key={message.id} 
