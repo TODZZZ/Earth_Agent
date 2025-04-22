@@ -1,10 +1,11 @@
-🗺️ Road maps
 
-- [ ] Keep Chat session
-- [ ] Output as APIs
-- [ ] Think of users, who will use it
-- [ ] Check agents 
-- [ ] Code debugger agent
-- [ ] Summrizer agent
-- [ ] RAG for GEE API
-- [ ] Consle, Inspect, and Task checker tools, Browser use tool? Make screentshot 
+### 🗺️ Roadmap
+
+- [ ] Enable persistent chat sessions  
+- [ ] Support output as APIs  
+- [ ] Identify and consider target users  
+- [ ] Review and refine agent design  
+- [ ] Develop a code debugging agent  
+- [ ] Implement a summarization agent  
+- [ ] Integrate Retrieval-Augmented Generation (RAG) for Google Earth Engine (GEE) API  
+- [ ] Build developer tools: console, inspector, task checker, and browser utility (e.g., screenshot capture) check: https://github.com/nanobrowser/nanobrowser
