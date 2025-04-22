@@ -50,10 +50,9 @@ const ApiKeyForm: React.FC<ApiKeyFormProps> = ({ onApiKeySet }) => {
       return false;
     }
     
-    // Basic OpenAI key format validation
-    const openAIKeyPattern = /^sk-[a-zA-Z0-9_-]{32,}$/;
-    if (!openAIKeyPattern.test(key.trim())) {
-      setError('Invalid API key format. OpenAI keys should start with "sk-" followed by at least 32 characters.');
+    // Basic OpenAI API key format validation (sk- prefix)
+    if (!key.trim().startsWith('sk-') || key.trim().length < 30) {
+      setError('Invalid API key format. OpenAI API keys should start with "sk-" and be at least 30 characters long.');
       return false;
     }
     
@@ -108,7 +107,7 @@ const ApiKeyForm: React.FC<ApiKeyFormProps> = ({ onApiKeySet }) => {
               setApiKey(e.target.value);
               setError(null); // Clear error when user types
             }}
-            placeholder="sk-..."
+            placeholder="Enter your OpenAI API key (sk-...)"
             className="w-full p-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-green-500"
           />
           {error && <p className="mt-1 text-sm text-red-600">{error}</p>}
@@ -125,7 +124,7 @@ const ApiKeyForm: React.FC<ApiKeyFormProps> = ({ onApiKeySet }) => {
       </form>
       
       <div className="mt-4 text-sm text-gray-500">
-        <p>You can get an API key from <a href="https://platform.openai.com/api-keys" target="_blank" className="text-blue-600 hover:underline">OpenAI's website</a>.</p>
+        <p>You can get an API key from the <a href="https://platform.openai.com/api-keys" target="_blank" className="text-blue-600 hover:underline">OpenAI dashboard</a>.</p>
         <p className="mt-1">Your API key is only stored in your browser and is never sent to our servers.</p>
       </div>
     </div>

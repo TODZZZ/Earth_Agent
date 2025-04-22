@@ -20,6 +20,7 @@ export const AgentStateSchema = z.object({
   taskPlan: z.string().optional(),
   selectedDatabases: z.array(DatasetEntrySchema).optional(),
   databaseSelectionText: z.string().optional(),
+  datasetAccessMethods: z.record(z.string()).optional(),
   generatedCode: z.string().optional(),
   errors: z.string().optional(),
   debugLog: z.array(z.string()).optional(),
@@ -44,6 +45,9 @@ export interface AgentState {
   // Database selection
   selectedDatabases?: DatasetEntry[];
   databaseSelectionText?: string;
+  
+  // Dataset access methods mapping
+  datasetAccessMethods?: Record<string, string>;
   
   // Code generation
   generatedCode?: string;

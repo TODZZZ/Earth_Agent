@@ -131,7 +131,9 @@ export const databaseSearch = async (
         if (matchingDatasets.length > 0) {
           // Map to a consistent format
           return matchingDatasets.map((dataset: any) => ({
+            id: dataset.id,  // Ensure ID is preserved
             name: dataset.id,
+            title: dataset.title || dataset.id,
             description: dataset.title || 'No description available',
             type: dataset.type || 'Unknown',
             startDate: dataset.start_date || '',
@@ -140,6 +142,10 @@ export const databaseSearch = async (
             provider: dataset.provider || '',
             gsd: dataset.gsd || '',
             source: 'GitHub Catalog',
+            asset_url: dataset.asset_url || `https://developers.google.com/earth-engine/datasets/catalog/${dataset.id?.replace(/\//g, '_')}`,
+            tags: dataset.tags || '',
+            start_date: dataset.start_date || '',
+            end_date: dataset.end_date || '',
             timeScore: dataset.timeScore // Include the score for debugging
           }));
         }
@@ -175,7 +181,9 @@ export const databaseSearch = async (
     
     // Process and sort by timeframe relevance if available
     const processedResults = searchResults.map((result: any) => ({
+      id: result.id, // Ensure ID is preserved
       name: result.id,
+      title: result.title || result.id,
       description: result.description || 'No description available',
       type: result.type || 'Unknown',
       startDate: result.startDate || '',
@@ -183,7 +191,8 @@ export const databaseSearch = async (
       updateFrequency: result.updateFrequency || '',
       provider: result.provider || '',
       gsd: result.gsd || '',
-      source: 'Earth Engine API'
+      source: 'Earth Engine API',
+      asset_url: `https://developers.google.com/earth-engine/datasets/catalog/${result.id?.replace(/\//g, '_')}`
     }));
     
     return scoreAndSortDatasetsByTime(processedResults, timeframe);

@@ -7,6 +7,7 @@
 import { AgentResponse, AgentState } from '@/lib/agents/types';
 import { getApiKey } from '../config';
 import { EarthEngineTools } from '../tools';
+import { callOpenAIAPI } from '../api/openai';
 
 /**
  * Fallback response when an error occurs during processing
@@ -37,7 +38,7 @@ const logToUI = (message: string) => {
 const initializeAgentSystem = async (): Promise<(input: string) => Promise<AgentResponse>> => {
   logToUI('Initializing minimal Earth Agent system');
 
-  // Get OpenAI API key
+  // Get API key
   const apiKey = await getApiKey();
   if (!apiKey) {
     console.error('No API key found');
@@ -45,37 +46,14 @@ const initializeAgentSystem = async (): Promise<(input: string) => Promise<Agent
     return noApiKeyFallback;
   }
 
-  // Initialize simple fetch-based model access function
+  // Initialize simple OpenAI-based model access function
   const callChatCompletionAPI = async (prompt: string, systemMessage: string, step: string) => {
     try {
       logToUI(`[${step}] Sending request to OpenAI API...`);
       
-      const response = await fetch('https://api.openai.com/v1/chat/completions', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${apiKey}`
-        },
-        body: JSON.stringify({
-          model: 'gpt-4o',
-          messages: [
-            { role: 'system', content: systemMessage },
-            { role: 'user', content: prompt }
-          ],
-          temperature: 0
-        })
-      });
-
-      if (!response.ok) {
-        const errorData = await response.json();
-        const errorMsg = `OpenAI API error: ${response.status} - ${JSON.stringify(errorData)}`;
-        logToUI(errorMsg);
-        throw new Error(errorMsg);
-      }
-
-      const data = await response.json();
+      const response = await callOpenAIAPI(prompt, systemMessage, 'gpt-4-1106-preview');
       logToUI(`[${step}] Received response from OpenAI API`);
-      return data.choices[0].message.content;
+      return response;
     } catch (error) {
       console.error(`[${step}] Error calling OpenAI API:`, error);
       logToUI(`[${step}] Error: ${error instanceof Error ? error.message : 'Unknown error'}`);
@@ -231,8 +209,33 @@ const initializeAgentSystem = async (): Promise<(input: string) => Promise<Agent
         logToUI('Removing duplicate datasets and selecting top candidates...');
         const uniqueDatasets = removeDuplicateDatasets(allDatasets).slice(0, 5);
         
+        // Debug the dataset structure
+        logs.push('Dataset structure debug:');
+        uniqueDatasets.forEach((dataset, idx) => {
+          logs.push(`Dataset ${idx+1} keys: ${Object.keys(dataset).join(', ')}`);
+          logs.push(`Dataset ${idx+1} id: ${dataset.id}`);
+          logs.push(`Dataset ${idx+1} asset_url: ${dataset.asset_url}`);
+        });
+        
+        // Ensure each dataset has all required properties
+        const processedDatasets = uniqueDatasets.map(dataset => {
+          // Make sure all fields are present even if empty
+          return {
+            id: dataset.id || '',
+            title: dataset.title || dataset.name || dataset.id || 'Unknown Dataset',
+            name: dataset.name || dataset.title || dataset.id || 'Unknown Dataset',
+            description: dataset.description || 'No description available',
+            type: dataset.type || 'image',
+            asset_url: dataset.asset_url || `https://developers.google.com/earth-engine/datasets/catalog/${dataset.id?.replace(/\//g, '_')}`,
+            tags: dataset.tags || '',
+            start_date: dataset.start_date || '',
+            end_date: dataset.end_date || '',
+            provider: dataset.provider || 'Unknown Provider'
+          };
+        });
+        
         // Update state with selected datasets
-        state.selectedDatabases = uniqueDatasets;
+        state.selectedDatabases = processedDatasets;
         state.databaseSelectionText = datasetSelectionText;
         
         logs.push(`Selected ${state.selectedDatabases?.length || 0} unique datasets`);
@@ -243,11 +246,13 @@ const initializeAgentSystem = async (): Promise<(input: string) => Promise<Agent
           state.selectedDatabases.forEach((dataset, index) => {
             const datasetInfo = `${index + 1}. ${dataset.name || dataset.id}`;
             logs.push(datasetInfo);
+            logs.push(`   ID: ${dataset.id}`);
+            logs.push(`   URL: ${dataset.asset_url}`);
             logToUI(datasetInfo);
           });
         }
         console.log('Selected datasets:', state.selectedDatabases?.length || 0);
-        } catch (error) {
+      } catch (error) {
         console.error('Error in dataset selection stage:', error);
         const errorMsg = `Error in dataset selection stage: ${error instanceof Error ? error.message : 'Unknown error'}`;
         logs.push(errorMsg);
@@ -259,10 +264,218 @@ const initializeAgentSystem = async (): Promise<(input: string) => Promise<Agent
         };
       }
       
-      // STEP 3: Generate Earth Engine code
+      // STEP 3: Analyze dataset access methods
       try {
-        logs.push('STEP 3: Generating Earth Engine code');
-        logToUI('STEP 3: Generating Earth Engine code');
+        logs.push('STEP 3: Analyzing dataset access methods');
+        logToUI('STEP 3: Analyzing dataset access methods');
+        
+        // Only proceed if we have selected datasets
+        if (!state.selectedDatabases || state.selectedDatabases.length === 0) {
+          const errorMsg = 'No datasets selected';
+          logs.push(errorMsg);
+          logToUI(errorMsg);
+          throw new Error(errorMsg);
+        }
+        
+        logs.push('Determining correct access methods for each dataset...');
+        logToUI('Determining correct access methods for each dataset...');
+        
+        // We'll store access methods here
+        const accessMethods: Record<string, any> = {};
+        
+        // For each dataset, analyze its documentation to extract access method
+        for (const dataset of state.selectedDatabases) {
+          // Debug log to check the dataset structure
+          logs.push(`Processing dataset: ${dataset.id}`);
+          logs.push(`Dataset properties: ${Object.keys(dataset).join(', ')}`);
+          
+          if (!dataset.asset_url) {
+            logs.push(`No asset URL available for dataset ${dataset.id}, generating standard URL`);
+            logToUI(`No asset URL available for dataset ${dataset.id}, generating URL`);
+            
+            // Generate a standard URL format if none is provided
+            const formattedId = dataset.id?.replace(/\//g, '_');
+            dataset.asset_url = `https://developers.google.com/earth-engine/datasets/catalog/${formattedId}`;
+            logs.push(`Generated URL: ${dataset.asset_url}`);
+          }
+          
+          logs.push(`Analyzing documentation for ${dataset.id} from ${dataset.asset_url}`);
+          logToUI(`Analyzing documentation for ${dataset.id} from ${dataset.asset_url}`);
+          
+          // Use OpenAI to extract information from documentation URL
+          const urlAnalysisSystemPrompt = `You are an AI agent that analyzes Earth Engine catalog URLs to extract comprehensive information about datasets. 
+          For each URL provided:
+          1. Determine the dataset ID
+          2. Extract the dataset type (Image, ImageCollection, or FeatureCollection) 
+          3. Extract a detailed description of the dataset
+          4. Identify all available bands/properties with descriptions
+          5. Determine the correct access method for the dataset
+          6. Extract code examples when available
+          7. Identify visualization parameters when available
+
+          Respond in a structured format for each dataset with sections for DATASET ID, TYPE, DESCRIPTION, AVAILABLE BANDS, ACCESS METHOD, CODE EXAMPLE, and VISUALIZATION PARAMETERS.`;
+          
+          const urlAnalysisPrompt = (urls: string[]) => 
+            `I have the following Earth Engine catalog URLs:
+
+${urls.map((url, index) => `${index + 1}. ${url}`).join('\n')}
+
+For each URL:
+1. Extract the dataset ID from the URL
+2. Determine if it's an Image, ImageCollection, or FeatureCollection
+3. Extract a comprehensive description of the dataset's purpose and content
+4. List all available bands/properties with descriptions when available
+5. Determine the correct access method in Earth Engine code
+6. Extract any code examples that show how to use this dataset
+7. Identify any visualization parameters recommended for this dataset
+
+Please format your response in a structured way for each dataset with these headers:
+DATASET ID:
+TYPE:
+DESCRIPTION:
+AVAILABLE BANDS:
+ACCESS METHOD:
+CODE EXAMPLE:
+VISUALIZATION PARAMETERS:
+
+This information will be used to generate Earth Engine code, so be comprehensive and accurate.`;
+          
+          try {
+            const urlAnalysisResponse = await callChatCompletionAPI(urlAnalysisPrompt([dataset.asset_url]), urlAnalysisSystemPrompt, `URL Analysis for ${dataset.id}`);
+            
+            // Parse the response to extract information about this specific dataset
+            const datasetInfoRegex = new RegExp(`DATASET ID:[\\s\\S]*?${dataset.id}[\\s\\S]*?(?:DATASET ID:|$)`, 'i');
+            const datasetInfoMatch = urlAnalysisResponse.match(datasetInfoRegex);
+            const datasetInfoResponse = datasetInfoMatch ? datasetInfoMatch[0] : '';
+            
+            if (!datasetInfoResponse) {
+              throw new Error(`Could not extract information for dataset: ${dataset.id}`);
+            }
+
+            // Extract type information
+            const typeMatch = datasetInfoResponse.match(/TYPE:(.+?)(?:DESCRIPTION:|$)/s);
+            const type = typeMatch && typeMatch[1].trim();
+            
+            // Extract description
+            const descriptionMatch = datasetInfoResponse.match(/DESCRIPTION:(.+?)(?:AVAILABLE BANDS:|$)/s);
+            const description = descriptionMatch && descriptionMatch[1].trim();
+            
+            // Extract bands information
+            let bands: Array<{name: string, description: string}> = [];
+            const bandsMatch = datasetInfoResponse.match(/AVAILABLE BANDS:(.+?)(?:ACCESS METHOD:|$)/s);
+            if (bandsMatch && bandsMatch[1]) {
+              // Parse bands from the response
+              const bandText = bandsMatch[1].trim();
+              const bandLines = bandText.split('\n').filter(line => line.trim().length > 0);
+              bands = bandLines.map(line => {
+                const parts = line.split(':');
+                if (parts.length > 1) {
+                  return { name: parts[0].trim(), description: parts[1].trim() };
+                }
+                return { name: line.trim(), description: '' };
+              });
+            }
+            
+            // Extract access method
+            const accessMethodMatch = datasetInfoResponse.match(/ACCESS METHOD:(.+?)(?:CODE EXAMPLE:|$)/s);
+            const accessMethod = accessMethodMatch && accessMethodMatch[1].trim();
+            
+            // Extract code example
+            const codeExampleMatch = datasetInfoResponse.match(/CODE EXAMPLE:(.+?)(?:VISUALIZATION PARAMETERS:|$)/s);
+            const codeExample = codeExampleMatch && codeExampleMatch[1].trim();
+            
+            // Extract visualization parameters
+            const visParamsMatch = datasetInfoResponse.match(/VISUALIZATION PARAMETERS:(.+?)(?:DATASET ID:|$)/s);
+            const visParams = visParamsMatch && visParamsMatch[1].trim();
+
+            // Store the extracted information
+            accessMethods[dataset.id] = {
+              id: dataset.id,
+              type: type || 'unknown',
+              description: description || 'No description available',
+              bands: bands,
+              accessType: (type || '').toLowerCase().includes('collection') ? 
+                (type || '').toLowerCase().includes('feature') ? 'ee.FeatureCollection' : 'ee.ImageCollection' : 
+                'ee.Image',
+              accessLine: accessMethod || `var dataset = ee.Image('${dataset.id}');`,
+              codeSnippet: codeExample || '',
+              visParams: visParams || ''
+            };
+            
+            logs.push(`Determined access method for ${dataset.id}: ${accessMethod}`);
+            logToUI(`Analyzed dataset: ${dataset.id}`);
+            
+          } catch (error) {
+            logs.push(`Error analyzing URL for ${dataset.id}: ${error instanceof Error ? error.message : 'Unknown error'}`);
+            logToUI(`Error analyzing URL for ${dataset.id}, using fallback`);
+            
+            // Apply fallback based on dataset type
+            let fallbackType = 'ee.Image';
+            if (dataset.type === 'image_collection') {
+              fallbackType = 'ee.ImageCollection';
+            } else if (dataset.type === 'table' || dataset.type === 'feature_collection') {
+              fallbackType = 'ee.FeatureCollection';
+            }
+            
+            accessMethods[dataset.id] = {
+              id: dataset.id,
+              type: fallbackType,
+              description: dataset.description || 'No description available',
+              bands: [],
+              accessType: fallbackType,
+              accessLine: `var dataset = ${fallbackType}('${dataset.id}');`,
+              codeSnippet: '',
+              visParams: ''
+            };
+          }
+        }
+        
+        // Update state with access methods
+        state.datasetAccessMethods = accessMethods;
+        logs.push(`Access methods determined: ${JSON.stringify(accessMethods, null, 2)}`);
+        logToUI(`Access methods determined for ${Object.keys(accessMethods).length} datasets`);
+        
+      } catch (error) {
+        console.error('Error in dataset access analysis stage:', error);
+        const errorMsg = `Error in dataset access analysis stage: ${error instanceof Error ? error.message : 'Unknown error'}`;
+        logs.push(errorMsg);
+        logToUI(errorMsg);
+        
+        // Create fallback access methods based on type
+        if (state.selectedDatabases) {
+          const fallbackMethods: Record<string, any> = {};
+          
+          state.selectedDatabases.forEach(dataset => {
+            // Simple mapping based on common patterns
+            let fallbackType = 'ee.Image';
+            if (dataset.type === 'image_collection') {
+              fallbackType = 'ee.ImageCollection';
+            } else if (dataset.type === 'table' || dataset.type === 'feature_collection') {
+              fallbackType = 'ee.FeatureCollection';
+            }
+            
+            fallbackMethods[dataset.id] = {
+              id: dataset.id,
+              type: fallbackType,
+              description: dataset.description || 'No description available',
+              bands: [],
+              accessType: fallbackType,
+              accessLine: `var dataset = ${fallbackType}('${dataset.id}');`,
+              codeSnippet: '',
+              visParams: ''
+            };
+          });
+          
+          state.datasetAccessMethods = fallbackMethods;
+          logs.push(`Using fallback access methods due to error`);
+          logToUI(`Using fallback access methods due to error`);
+        }
+      }
+      
+      // STEP 4: Generate Earth Engine code
+      try {
+        logs.push('STEP 4: Generating Earth Engine code');
+        logToUI('STEP 4: Generating Earth Engine code');
         
         // Only proceed if we have a plan and datasets
         if (!state.taskPlan || !state.selectedDatabases) {
@@ -275,27 +488,42 @@ const initializeAgentSystem = async (): Promise<(input: string) => Promise<Agent
         // Format datasets for prompt
         logs.push('Formatting dataset information for code generation...');
         logToUI('Formatting dataset information for code generation...');
-        const datasetsFormatted = formatDatasetsForPrompt(state.selectedDatabases);
         
         // Generate code using the model
         logs.push('Generating Earth Engine code with LLM...');
         logToUI('Generating Earth Engine code with LLM...');
         const codeSystemPrompt = `You are an expert in Google Earth Engine JavaScript programming.
-        Write clean, efficient, and well-commented code that addresses user tasks.`;
+        Write clean, efficient, and well-commented code that addresses user tasks using multiple datasets effectively.`;
         
-        const codePrompt = `Create Google Earth Engine JavaScript code for the following task:
+        const codePrompt = (
+          datasets: any[], 
+          location: string, 
+          accessMethods: Record<string, any> = {},
+          step1Response: string = ""
+        ) => {
+          return `I need to create Earth Engine JavaScript code that uses multiple of the following datasets:
+
+${formatDatasetsForPrompt(datasets, accessMethods)}
+
+My area of interest is: ${location}
+
+Please write complete, working Earth Engine JavaScript code that:
+1. Loads at least 3-4 of these datasets (use as many as appropriate for a meaningful analysis)
+2. Processes and visualizes the data in meaningful ways
+3. Includes proper attribution and descriptions for each dataset used
+4. Creates a proper visualization with appropriate visualization parameters
+5. Exports or displays results on the map
+
+The code should be complete, functional, and ready to run in the Earth Engine Code Editor.
+Include helpful comments to explain key steps in the analysis.
+
+Background context from my initial query: 
+${step1Response}
+
+Please provide only the working Earth Engine JavaScript code with no additional explanation.`;
+        };
         
-        TASK: ${state.input}
-        
-        PLAN: ${state.taskPlan}
-        
-        AVAILABLE DATASETS:
-        ${datasetsFormatted}
-        
-        Write clean, efficient Earth Engine code that accomplishes this task. Include comments to explain your approach.
-        The code should be ready to run in the Earth Engine Code Editor. Return ONLY the JavaScript code.`;
-        
-        const codeResponse = await callChatCompletionAPI(codePrompt, codeSystemPrompt, 'Code Generator');
+        const codeResponse = await callChatCompletionAPI(codePrompt(state.selectedDatabases, state.input, state.datasetAccessMethods, state.taskPlan), codeSystemPrompt, 'Code Generator');
         const generatedCode = extractCodeBlock(codeResponse);
         logs.push('Code generated successfully');
         logToUI('Code generated successfully');
@@ -315,10 +543,10 @@ const initializeAgentSystem = async (): Promise<(input: string) => Promise<Agent
         };
       }
       
-      // STEP 4: Create final response
+      // STEP 5: Create final response
       try {
-        logs.push('STEP 4: Creating final response');
-        logToUI('STEP 4: Creating final response');
+        logs.push('STEP 5: Creating final response');
+        logToUI('STEP 5: Creating final response');
         
         // Only proceed if we have generated code
         if (!state.generatedCode) {
@@ -366,45 +594,22 @@ const initializeAgentSystem = async (): Promise<(input: string) => Promise<Agent
         };
       }
     } catch (error) {
-      console.error('Error in processing user request:', error);
-      const errorMsg = `Fatal error in processing: ${error instanceof Error ? error.message : 'Unknown error'}`;
-      logs.push(errorMsg);
-      logToUI(errorMsg);
+      console.error('Error in processing:', error);
       return errorFallback(error, logs);
     }
   };
 
-  // Add defensive check before returning
-  if (typeof processingFunction !== 'function') {
-    console.error('Failed to initialize processing function properly');
-    logToUI('Failed to initialize processing function properly');
-    return noApiKeyFallback; // Return fallback as a safety measure
-  }
-
-  // Return a properly typed wrapper function for the processingFunction
-  return (userInput: string): Promise<AgentResponse> => {
-    if (!userInput || typeof userInput !== 'string') {
-      console.error('Invalid input provided to agent system:', userInput);
-      logToUI('Invalid input provided to agent system');
-      return Promise.resolve({
-        response: "I couldn't process your request. Please provide a valid query.",
-        code: "// No code was generated (invalid input)",
-        debugLog: ["Invalid input type provided"]
-      });
-    }
-    
-    return processingFunction(userInput);
-  };
+  return processingFunction;
 };
 
 /**
- * Fallback response when no OpenAI API key is available
+ * Fallback response when there's no API key
  */
 const noApiKeyFallback = async (_input: string): Promise<AgentResponse> => {
-      return {
-    response: 'OpenAI API key is not configured. Please set your API key in the settings.',
-    code: '// Missing API key',
-    debugLog: ['No API key found']
+  return {
+    response: "I need an API key to work. Please configure your API key in the extension settings.",
+    code: "// No API key configured",
+    debugLog: ['No API key configured. Please set your API key in settings.']
   };
 };
 
@@ -458,10 +663,44 @@ const removeDuplicateDatasets = (datasets: any[]): any[] => {
 /**
  * Format datasets for inclusion in a prompt
  */
-const formatDatasetsForPrompt = (datasets: any[]): string => {
-  return datasets.map(dataset => 
-    `- ${dataset.name} (${dataset.id}): ${dataset.description || 'No description available'}`
-  ).join('\n');
+const formatDatasetsForPrompt = (datasets: any[], accessMethods: Record<string, any> = {}): string => {
+  return datasets.map(dataset => {
+    const accessInfo = accessMethods[dataset.id] || {
+      accessType: dataset.type === 'image_collection' ? 'ee.ImageCollection' : 
+                 dataset.type === 'table' ? 'ee.FeatureCollection' : 'ee.Image',
+      accessLine: `var dataset = ee.Image('${dataset.id}');`,
+      codeSnippet: '',
+      description: dataset.description || 'No description available',
+      bands: [] as Array<{name: string, description: string}>
+    };
+    
+    let formattedDataset = `- ${dataset.name || dataset.title || dataset.id} (${dataset.id}): 
+      Type: ${dataset.type || 'unknown'}
+      Access Method: ${accessInfo.accessLine}
+      Description: ${accessInfo.description || dataset.description || 'No description available'}`;
+    
+    // Add bands information if available
+    if (accessInfo.bands && accessInfo.bands.length > 0) {
+      formattedDataset += `\n      Available Bands/Properties: ${accessInfo.bands.map((band: {name: string, description: string} | string) => 
+        typeof band === 'string' ? band : (band.name + (band.description ? ` - ${band.description}` : ''))
+      ).join(', ')}`;
+    }
+    
+    // Add visualization parameters if available
+    if (accessInfo.visParams) {
+      formattedDataset += `\n      Visualization Parameters: ${accessInfo.visParams}`;
+    }
+    
+    // Add code example if available
+    if (accessInfo.codeSnippet && accessInfo.codeSnippet.length > 0) {
+      const codeLines = accessInfo.codeSnippet.split('\n');
+      // Only include a short version of the code snippet to keep the prompt manageable
+      const shortCodeSnippet = codeLines.slice(0, Math.min(5, codeLines.length)).join('\n');
+      formattedDataset += `\n      Code Example:\n      ${shortCodeSnippet}${codeLines.length > 5 ? '\n      // ... more code ...' : ''}`;
+    }
+    
+    return formattedDataset;
+  }).join('\n\n');
 };
 
 /**

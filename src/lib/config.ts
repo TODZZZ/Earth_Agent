@@ -6,13 +6,13 @@
 
 // Default configuration values
 export const DEFAULT_CONFIG = {
-  modelName: "gpt-3.5-turbo",
+  modelName: "gpt-4-1106-preview",
   temperature: 0
 };
 
 // Keys used in Chrome storage
 export const STORAGE_KEYS = {
-  OPENAI_API_KEY: 'earth_agent_openai_api_key',
+  API_KEY: 'earth_agent_api_key',
   SETTINGS: 'earth_agent_settings',
 };
 
@@ -28,7 +28,7 @@ export const saveApiKey = async (apiKey: string): Promise<void> => {
     }
     
     console.log("Saving API key to Chrome storage, length:", apiKey.length);
-    await chrome.storage.sync.set({ [STORAGE_KEYS.OPENAI_API_KEY]: apiKey });
+    await chrome.storage.sync.set({ [STORAGE_KEYS.API_KEY]: apiKey });
     console.log('API key saved successfully');
   } catch (error) {
     console.error('Error saving API key:', error);
@@ -48,8 +48,8 @@ export const getApiKey = async (): Promise<string | null> => {
     }
     
     console.log("Retrieving API key from Chrome storage...");
-    const result = await chrome.storage.sync.get([STORAGE_KEYS.OPENAI_API_KEY]);
-    const apiKey = result[STORAGE_KEYS.OPENAI_API_KEY] || null;
+    const result = await chrome.storage.sync.get([STORAGE_KEYS.API_KEY]);
+    const apiKey = result[STORAGE_KEYS.API_KEY] || null;
     console.log("API key retrieved from storage:", apiKey ? `length: ${apiKey.length}` : "not found");
     return apiKey;
   } catch (error) {

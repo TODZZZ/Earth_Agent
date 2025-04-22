@@ -2,6 +2,8 @@ import React, { useState, useRef, useEffect } from 'react'
 import { initializeAgentSystem } from '../lib/agents'
 import { AgentResponseSchema } from '../lib/agents/types'
 import { z } from 'zod'
+import { getApiKey } from '@/lib/config'
+import { callOpenAIAPI } from '../lib/api/openai'
 
 interface Message {
   id: string
@@ -9,6 +11,14 @@ interface Message {
   content: string
   code?: string
   debugLog?: string[]
+}
+
+// Add an interface for code memory
+interface CodeMemoryItem {
+  code: string
+  timestamp: number
+  description?: string
+  errorMessages?: string[]
 }
 
 interface ChatInterfaceProps {
@@ -29,6 +39,9 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({ onQuerySubmit }) =
   const [agentSystem, setAgentSystem] = useState<any>(null)
   const [agentInitError, setAgentInitError] = useState<string | null>(null)
   const [processingLogs, setProcessingLogs] = useState<string[]>([])
+  // Add state for code memory
+  const [codeMemory, setCodeMemory] = useState<CodeMemoryItem[]>([])
+  const [lastGeneratedCode, setLastGeneratedCode] = useState<string | null>(null)
   const messagesEndRef = useRef<HTMLDivElement>(null)
 
   // Initialize the agent system on component mount
@@ -63,15 +76,134 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({ onQuerySubmit }) =
     
     window.addEventListener('message', handleLogMessage);
     
+    // Load code memory from localStorage on mount
+    const savedCodeMemory = localStorage.getItem('earthAgentCodeMemory');
+    if (savedCodeMemory) {
+      try {
+        const parsedMemory = JSON.parse(savedCodeMemory);
+        setCodeMemory(parsedMemory);
+      } catch (e) {
+        console.error('Failed to parse saved code memory:', e);
+      }
+    }
+    
     return () => {
       window.removeEventListener('message', handleLogMessage);
     };
   }, [])
 
+  // Save code memory to localStorage when it changes
+  useEffect(() => {
+    if (codeMemory.length > 0) {
+      localStorage.setItem('earthAgentCodeMemory', JSON.stringify(codeMemory));
+    }
+  }, [codeMemory]);
+  
   // Scroll to bottom when messages change
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [messages, processingLogs])
+
+  // Check if the user is asking to debug or fix previous code
+  const isDebugRequest = (text: string): boolean => {
+    const debugKeywords = [
+      'debug', 'fix', 'error', 'issue', 'problem', 'not working',
+      'broken', 'fails', 'doesn\'t work', 'doesn\'t run', 'doesn\'t execute'
+    ];
+    
+    const lowerText = text.toLowerCase();
+    
+    // Check if the text contains debugging keywords
+    return debugKeywords.some(keyword => lowerText.includes(keyword)) && 
+           lastGeneratedCode !== null;
+  }
+
+  // Extract error message from user input
+  const extractErrorMessage = (text: string): string => {
+    // Look for common error message patterns
+    const errorPatterns = [
+      /error:?\s*(.*?)(?:\.|$)/i,
+      /exception:?\s*(.*?)(?:\.|$)/i,
+      /failed:?\s*(.*?)(?:\.|$)/i,
+      /problem:?\s*(.*?)(?:\.|$)/i,
+      /issue:?\s*(.*?)(?:\.|$)/i
+    ];
+    
+    for (const pattern of errorPatterns) {
+      const match = text.match(pattern);
+      if (match && match[1]) {
+        return match[1].trim();
+      }
+    }
+    
+    // If no specific pattern was found, return the entire text
+    return text;
+  }
+
+  // Direct debug method that bypasses the full agent system
+  const handleDebugRequest = async (userInput: string, codeToDebug: string): Promise<{
+    response: string;
+    code?: string;
+    debugLog?: string[];
+  }> => {
+    try {
+      const errorMsg = extractErrorMessage(userInput);
+      setProcessingLogs(prev => [...prev, `Extracted error message: ${errorMsg}`]);
+      setProcessingLogs(prev => [...prev, 'Sending debug request directly to language model...']);
+      
+      // Get API key
+      const apiKey = await getApiKey();
+      if (!apiKey) {
+        throw new Error('No API key configured. Please set your API key in the settings.');
+      }
+      
+      // Create a specialized debug prompt
+      const debugPrompt = `I need you to debug this Google Earth Engine JavaScript code and fix any errors:
+
+\`\`\`javascript
+${codeToDebug}
+\`\`\`
+
+The error is: ${errorMsg}
+
+Please provide the corrected code and a brief explanation of what was wrong and how you fixed it. Format your response with a short explanation followed by the corrected code in a code block.`;
+
+      setProcessingLogs(prev => [...prev, 'Calling OpenAI API directly for debugging...']);
+      
+      // Call OpenAI API using the helper function
+      const systemMessage = 'You are an expert in Google Earth Engine JavaScript programming who specializes in debugging code. Provide concise explanations and corrected code.';
+      
+      const completionText = await callOpenAIAPI(debugPrompt, systemMessage);
+      
+      // Extract code block from completion
+      const codeBlockRegex = /```(?:javascript|js)?\s*([\s\S]*?)```/;
+      const match = completionText.match(codeBlockRegex);
+      
+      let fixedCode = codeToDebug; // Default to original code
+      let explanation = completionText; // Default to full response
+      
+      if (match && match[1]) {
+        fixedCode = match[1].trim();
+        
+        // Extract explanation (everything before the first code block)
+        const parts = completionText.split(codeBlockRegex);
+        if (parts.length > 0) {
+          explanation = parts[0].trim();
+        }
+      }
+      
+      setProcessingLogs(prev => [...prev, 'Successfully received debugging help']);
+      
+      return {
+        response: explanation,
+        code: fixedCode,
+        debugLog: ['Debug request processed successfully']
+      };
+    } catch (error) {
+      console.error('Error in direct debug request:', error);
+      throw error;
+    }
+  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -98,97 +230,100 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({ onQuerySubmit }) =
         await onQuerySubmit();
       }
       
-      if (agentSystem) {
-        // Use the agent system to process the input - ensure input is valid
-        if (trimmedInput) {
-          try {
-            // Get response from agent system with detailed error tracking
-            console.log('Sending query to agent system:', trimmedInput);
-            const rawResponse = await agentSystem(trimmedInput)
-            console.log('Raw response from agent system:', rawResponse);
-            
-            // Validate with Zod schema to ensure correct format
-            try {
-              const validatedResponse = AgentResponseSchema.parse(rawResponse)
-              
-              // Create message from validated response
-              const assistantMessage: Message = {
-                id: (Date.now() + 1).toString(),
-                role: 'assistant',
-                content: validatedResponse.response,
-                code: validatedResponse.code,
-                debugLog: validatedResponse.debugLog || processingLogs
-              }
-              
-              setMessages(prev => [...prev, assistantMessage])
-              setProcessingLogs([]) // Clear processing logs after adding to message
-            } catch (zodError) {
-              // Handle Zod validation errors specifically
-              console.error('Zod validation error:', zodError);
-              throw new Error(`Response validation failed: ${zodError instanceof z.ZodError ? 
-                zodError.errors.map(e => e.message).join(', ') : 'Unknown Zod error'}`);
-            }
-          } catch (agentError) {
-            // Provide detailed error logging to identify which agent/step failed
-            if (agentError instanceof Error) {
-              // Extract any agent-specific information if available
-              const errorAgent = (agentError as AgentError).agent || 'unknown';
-              const errorPhase = (agentError as AgentError).phase || 'unknown';
-              const errorDetails = (agentError as AgentError).details;
-              
-              console.error(`Error in agent system [${errorAgent}][${errorPhase}]:`, agentError);
-              console.error('Error details:', errorDetails);
-              console.error('Error stack:', agentError.stack);
-            } else {
-              console.error('Non-Error object thrown in agent system:', agentError);
-            }
-            
-            // Try to extract any useful error information
-            let errorMessage = 'Unknown error';
-            let errorLocation = '';
-            
-            if (agentError instanceof Error) {
-              errorMessage = agentError.message;
-              // Try to extract context from error message or properties
-              if ((agentError as AgentError).agent) {
-                errorLocation = `in ${(agentError as AgentError).agent} agent`;
-              } else if ((agentError as AgentError).phase) {
-                errorLocation = `during ${(agentError as AgentError).phase}`;
-              } else if (agentError.stack) {
-                // Try to extract context from stack trace
-                const stackLines = agentError.stack.split('\n');
-                for (const line of stackLines) {
-                  if (line.includes('/agents/') && !line.includes('/index.ts')) {
-                    const agentMatch = line.match(/\/agents\/([^\/\.]+)/);
-                    if (agentMatch && agentMatch[1]) {
-                      errorLocation = `in ${agentMatch[1]} agent`;
-                      break;
-                    }
-                  }
-                }
-              }
-            } else if (agentError instanceof z.ZodError) {
-              // Handle Zod validation errors specifically
-              errorMessage = `Data validation error: ${agentError.errors.map(e => e.message).join(', ')}`;
-            }
-            
-            const errorResponse: Message = {
-              id: (Date.now() + 1).toString(),
-              role: 'assistant',
-              content: `I encountered an error ${errorLocation} while processing your request: ${errorMessage}. Please try again with a different query.`,
-              debugLog: processingLogs
-            }
-            setMessages(prev => [...prev, errorResponse])
-            setProcessingLogs([]) // Clear processing logs after adding to message
+      // Check if this is a debug request - EARLY DETECTION
+      const debugRequest = isDebugRequest(trimmedInput);
+      
+      // Early decision point: debug or generate
+      if (debugRequest && lastGeneratedCode) {
+        // Fast path: Direct debug request
+        try {
+          setProcessingLogs(prev => [...prev, 'Debug request detected, using optimized debug path']);
+          
+          // Use specialized debug handler that bypasses full agent system
+          const debugResponse = await handleDebugRequest(trimmedInput, lastGeneratedCode);
+          
+          // Store the fixed code in memory if present
+          if (debugResponse.code) {
+            setLastGeneratedCode(debugResponse.code);
+            setCodeMemory(prev => [
+              {
+                code: debugResponse.code || '',
+                timestamp: Date.now(),
+                description: 'Fixed code',
+                errorMessages: [extractErrorMessage(trimmedInput)]
+              },
+              ...prev.slice(0, 9) // Keep only the 10 most recent items
+            ]);
           }
-        } else {
-          // Handle empty input (shouldn't happen due to the check at the beginning)
-          const errorMessage: Message = {
+          
+          // Create message from debug response
+          const assistantMessage: Message = {
             id: (Date.now() + 1).toString(),
             role: 'assistant',
-            content: "I couldn't process your request. Please provide a valid query."
+            content: debugResponse.response,
+            code: debugResponse.code,
+            debugLog: debugResponse.debugLog || processingLogs
           }
-          setMessages(prev => [...prev, errorMessage])
+          
+          setMessages(prev => [...prev, assistantMessage]);
+          setProcessingLogs([]);
+        } catch (error) {
+          console.error('Error in optimized debug path:', error);
+          const errorResponse: Message = {
+            id: (Date.now() + 1).toString(),
+            role: 'assistant',
+            content: `I encountered an error while trying to debug the code: ${error instanceof Error ? error.message : 'Unknown error'}. Please try describing the error differently.`,
+            debugLog: processingLogs
+          }
+          setMessages(prev => [...prev, errorResponse]);
+        }
+      } else if (agentSystem) {
+        // Regular path: Use full agent system for code generation
+        setProcessingLogs(prev => [...prev, 'Using full agent system for request processing']);
+        
+        try {
+          // Get response from agent system with detailed error tracking
+          console.log('Sending query to agent system:', trimmedInput);
+          const rawResponse = await agentSystem(trimmedInput)
+          console.log('Raw response from agent system:', rawResponse);
+          
+          // Validate with Zod schema to ensure correct format
+          try {
+            const validatedResponse = AgentResponseSchema.parse(rawResponse)
+            
+            // Store generated code in memory if present
+            if (validatedResponse.code) {
+              setLastGeneratedCode(validatedResponse.code);
+              setCodeMemory(prev => [
+                {
+                  code: validatedResponse.code || '',
+                  timestamp: Date.now(),
+                  description: trimmedInput.substring(0, 100) // First 100 chars of query as description
+                },
+                ...prev.slice(0, 9) // Keep only the 10 most recent items
+              ]);
+            }
+            
+            // Create message from validated response
+            const assistantMessage: Message = {
+              id: (Date.now() + 1).toString(),
+              role: 'assistant',
+              content: validatedResponse.response,
+              code: validatedResponse.code,
+              debugLog: validatedResponse.debugLog || processingLogs
+            }
+            
+            setMessages(prev => [...prev, assistantMessage])
+            setProcessingLogs([]) // Clear processing logs after adding to message
+          } catch (zodError) {
+            // Handle Zod validation errors specifically
+            console.error('Zod validation error:', zodError);
+            throw new Error(`Response validation failed: ${zodError instanceof z.ZodError ? 
+              zodError.errors.map(e => e.message).join(', ') : 'Unknown Zod error'}`);
+          }
+        } catch (agentError) {
+          // Handle agent errors as before
+          handleAgentError(agentError);
         }
       } else {
         // Fallback if agent system isn't initialized
@@ -219,6 +354,61 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({ onQuerySubmit }) =
       setIsLoading(false)
     }
   }
+
+  // Helper function to handle agent errors (extracted to reduce duplication)
+  const handleAgentError = (agentError: any) => {
+    // Provide detailed error logging to identify which agent/step failed
+    if (agentError instanceof Error) {
+      // Extract any agent-specific information if available
+      const errorAgent = (agentError as AgentError).agent || 'unknown';
+      const errorPhase = (agentError as AgentError).phase || 'unknown';
+      const errorDetails = (agentError as AgentError).details;
+      
+      console.error(`Error in agent system [${errorAgent}][${errorPhase}]:`, agentError);
+      console.error('Error details:', errorDetails);
+      console.error('Error stack:', agentError.stack);
+    } else {
+      console.error('Non-Error object thrown in agent system:', agentError);
+    }
+    
+    // Try to extract any useful error information
+    let errorMessage = 'Unknown error';
+    let errorLocation = '';
+    
+    if (agentError instanceof Error) {
+      errorMessage = agentError.message;
+      // Try to extract context from error message or properties
+      if ((agentError as AgentError).agent) {
+        errorLocation = `in ${(agentError as AgentError).agent} agent`;
+      } else if ((agentError as AgentError).phase) {
+        errorLocation = `during ${(agentError as AgentError).phase}`;
+      } else if (agentError.stack) {
+        // Try to extract context from stack trace
+        const stackLines = agentError.stack.split('\n');
+        for (const line of stackLines) {
+          if (line.includes('/agents/') && !line.includes('/index.ts')) {
+            const agentMatch = line.match(/\/agents\/([^\/\.]+)/);
+            if (agentMatch && agentMatch[1]) {
+              errorLocation = `in ${agentMatch[1]} agent`;
+              break;
+            }
+          }
+        }
+      }
+    } else if (agentError instanceof z.ZodError) {
+      // Handle Zod validation errors specifically
+      errorMessage = `Data validation error: ${agentError.errors.map(e => e.message).join(', ')}`;
+    }
+    
+    const errorResponse: Message = {
+      id: (Date.now() + 1).toString(),
+      role: 'assistant',
+      content: `I encountered an error ${errorLocation} while processing your request: ${errorMessage}. Please try again with a different query.`,
+      debugLog: processingLogs
+    }
+    setMessages(prev => [...prev, errorResponse])
+    setProcessingLogs([]) // Clear processing logs after adding to message
+  };
 
   const handleRunCode = (code: string) => {
     console.log('Running code in Earth Engine:', code)
